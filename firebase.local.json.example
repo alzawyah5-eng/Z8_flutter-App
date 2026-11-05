@@ -1,0 +1,14 @@
+{
+  "FIREBASE_ANDROID_API_KEY": "replace-with-Android-api-key-from-google-services.json",
+  "FIREBASE_IOS_API_KEY": "replace-with-iOS-API_KEY-from-GoogleService-Info.plist",
+  "FIREBASE_WEB_API_KEY": "replace-with-Web-app-apiKey",
+  "FIREBASE_ANDROID_APP_ID": "1:533283927028:android:052d10822fca6cfad73fa1",
+  "FIREBASE_IOS_APP_ID": "1:533283927028:ios:b6f850056061ad3ad73fa1",
+  "FIREBASE_WEB_APP_ID": "1:533283927028:web:8ca085c9f349c20bd73fa1",
+  "FIREBASE_SENDER_ID": "533283927028",
+  "FIREBASE_PROJECT_ID": "z8-portal",
+  "FIREBASE_AUTH_DOMAIN": "z8-portal.firebaseapp.com",
+  "FIREBASE_STORAGE_BUCKET": "z8-portal.firebasestorage.app",
+  "FIREBASE_GOOGLE_SERVER_CLIENT_ID": "replace-with-Web-OAuth-client-ID",
+  "FIREBASE_GOOGLE_IOS_CLIENT_ID": "replace-with-iOS-OAuth-client-ID"
+}
