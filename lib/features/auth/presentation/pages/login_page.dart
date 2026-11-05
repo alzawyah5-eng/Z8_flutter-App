@@ -32,7 +32,12 @@ class _LoginPageState extends State<LoginPage> {
     FocusScope.of(context).unfocus();
     if (!_formKey.currentState!.validate()) return;
     final success = await context.read<AuthCubit>().login(_email.text, _password.text);
-    if (success && mounted) Navigator.pushReplacementNamed(context, '/signed-in');
+    if (!mounted) return;
+    if (success) {
+      Navigator.pushReplacementNamed(context, '/signed-in');
+    } else if (context.read<AuthCubit>().state.userNotRegistered) {
+      Navigator.pushReplacementNamed(context, '/not-registered');
+    }
   }
 
   @override

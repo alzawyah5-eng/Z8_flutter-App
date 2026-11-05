@@ -36,8 +36,12 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
         _password.text,
         admin: true,
       );
-      if (success && mounted)
+      if (success && mounted) {
         Navigator.pushReplacementNamed(context, '/signed-in');
+      } else if (mounted &&
+          context.read<AuthCubit>().state.userNotRegistered) {
+        Navigator.pushReplacementNamed(context, '/not-registered');
+      }
     }
   }
 

@@ -22,6 +22,9 @@ class AuthFormCard extends StatelessWidget {
     );
     if (success && context.mounted) {
       Navigator.pushReplacementNamed(context, '/signed-in');
+    } else if (context.mounted &&
+        context.read<AuthCubit>().state.userNotRegistered) {
+      Navigator.pushReplacementNamed(context, '/not-registered');
     }
   }
 

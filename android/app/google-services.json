@@ -1,0 +1,54 @@
+{
+  "project_info": {
+    "project_number": "533283927028",
+    "project_id": "z8-portal",
+    "storage_bucket": "z8-portal.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:533283927028:android:052d10822fca6cfad73fa1",
+        "android_client_info": {
+          "package_name": "com.nakhba.z8_portal"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "533283927028-vf1nds0f71fsd4p1u0s37qbvpl84u0u3.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.nakhba.z8_portal",
+            "certificate_hash": "c0d54bf470584d7d3579e1c98128c2d247e3fe1a"
+          }
+        },
+        {
+          "client_id": "533283927028-9f8gpqfs98s82gd6gv8qcvdqr7pgj4uq.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCJ2BAJoQb3bipWplLxHZwGDw1eYgfCHQs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "533283927028-9f8gpqfs98s82gd6gv8qcvdqr7pgj4uq.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "533283927028-dce43ejimfos4405k9u1fm3jk3toknge.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.nakhba.z8portal"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
