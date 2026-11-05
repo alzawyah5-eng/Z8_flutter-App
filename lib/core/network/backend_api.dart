@@ -37,6 +37,13 @@ class BackendApi {
   static Future<Map<String, dynamic>> exchangeGoogleIdToken(String idToken) =>
       _request('POST', '/auth/google/session', body: {'idToken': idToken});
 
+  static Future<Map<String, dynamic>> sendNotificationTest(String idToken) =>
+      _request(
+        'POST',
+        '/me/notifications/test',
+        idToken: idToken,
+      );
+
   static Future<void> registerDevice(
     String idToken,
     String token,
@@ -94,10 +101,15 @@ class BackendApi {
         final code = data['code'] as String?;
         final rawMessage = data['message'];
         final details = data['details'] as String?;
-        final message = rawMessage is String
-            ? rawMessage
-            : code == 'user_not_registered'
+        if (kDebugMode) {
+          debugPrint('[Z8 API] $method ${uri.path} failed with HTTP ${response.statusCode}; code=${code ?? 'none'}.');
+        }
+        final message = code == 'user_not_registered'
             ? 'This account is not registered for Z8. Contact the administrator to request access.'
+            : response.statusCode == 404
+            ? 'The backend route is unavailable. Check the API address and restart the backend.'
+            : rawMessage is String
+            ? rawMessage
             : 'The Z8 service could not complete sign-in. Please try again.';
         throw BackendApiException(code, message, details: details, statusCode: response.statusCode);
       }

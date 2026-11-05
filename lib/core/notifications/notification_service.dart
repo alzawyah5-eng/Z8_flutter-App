@@ -5,6 +5,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../firebase_config.dart';
 import '../network/backend_api.dart';
@@ -21,6 +22,8 @@ class NotificationService {
   NotificationService._();
 
   static final FirebaseMessaging _messaging = FirebaseMessaging.instance;
+  static const MethodChannel _notificationChannel =
+      MethodChannel('com.nakhba.z8_portal/notifications');
   static StreamSubscription<RemoteMessage>? _foregroundSubscription;
   static StreamSubscription<RemoteMessage>? _openedSubscription;
   static StreamSubscription<String>? _tokenSubscription;
@@ -82,6 +85,58 @@ class NotificationService {
     _registeredToken = null;
   }
 
+  static Future<Map<String, dynamic>> sendTestPush() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      throw const BackendApiException('not-signed-in', 'Sign in before testing notifications.');
+    }
+    await _registerCurrentDeviceForTest(user);
+    final idToken = await user.getIdToken();
+    if (idToken == null) {
+      throw const BackendApiException('missing-id-token', 'The signed-in session needs to be refreshed.');
+    }
+    return BackendApi.sendNotificationTest(idToken);
+  }
+
+  static Future<void> _registerCurrentDeviceForTest(User user) async {
+    final settings = await _messaging.requestPermission(
+      alert: true,
+      badge: true,
+      sound: true,
+      provisional: false,
+    );
+    if (settings.authorizationStatus != AuthorizationStatus.authorized &&
+        settings.authorizationStatus != AuthorizationStatus.provisional) {
+      throw const BackendApiException(
+        'notifications-permission-denied',
+        'Enable notifications for Z8 Portal in Android settings, then try again.',
+      );
+    }
+
+    if (defaultTargetPlatform == TargetPlatform.iOS &&
+        await _messaging.getAPNSToken() == null) {
+      throw const BackendApiException(
+        'notifications-not-ready',
+        'Apple Push Notifications are not ready on this device. Try again shortly.',
+      );
+    }
+
+    final token = await _messaging.getToken();
+    if (token == null || token.isEmpty) {
+      throw const BackendApiException(
+        'notifications-token-unavailable',
+        'This phone has not received a push token yet. Check its internet connection and try again.',
+      );
+    }
+    final idToken = await user.getIdToken();
+    if (idToken == null) {
+      throw const BackendApiException('missing-id-token', 'The signed-in session needs to be refreshed.');
+    }
+    final platform = defaultTargetPlatform == TargetPlatform.iOS ? 'ios' : 'android';
+    await BackendApi.registerDevice(idToken, token, platform);
+    _registeredToken = token;
+  }
+
   static Future<void> _registerToken(String token) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
@@ -104,6 +159,12 @@ class NotificationService {
 
   static void _showForeground(RemoteMessage message) {
     final notification = message.notification;
+    if (notification != null && defaultTargetPlatform == TargetPlatform.android) {
+      unawaited(_showAndroidNotification(
+        notification.title ?? 'Z8',
+        notification.body ?? 'You have a new update.',
+      ));
+    }
     final context = notificationNavigatorKey.currentContext;
     if (notification == null || context == null) return;
     ScaffoldMessenger.maybeOf(context)
@@ -115,6 +176,23 @@ class NotificationService {
         ),
         behavior: SnackBarBehavior.floating,
       ));
+  }
+
+  static Future<void> _showAndroidNotification(String title, String body) async {
+    try {
+      await _notificationChannel.invokeMethod<void>('showNotification', {
+        'title': title,
+        'body': body,
+      });
+    } on PlatformException catch (error) {
+      debugPrint('Could not show foreground notification: ${error.message}');
+    } on MissingPluginException catch (error) {
+      // Hot reload cannot register MainActivity's native MethodChannel. Keep
+      // the in-app SnackBar working; a full Android rebuild installs the channel.
+      debugPrint(
+        'Android notification bridge is missing from the installed build (${error.message}). Stop the app and run flutter run to rebuild native code.',
+      );
+    }
   }
 
   static void _openMessage(RemoteMessage message) {

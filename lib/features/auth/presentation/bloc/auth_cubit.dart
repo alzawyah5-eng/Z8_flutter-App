@@ -82,6 +82,11 @@ class AuthCubit extends Cubit<AuthState> {
         await _requiredAuth.signOut();
         throw FirebaseAuthException(code: 'not-admin');
       }
+      if (!admin && profile['role'] == 'admin') {
+        _logAuth('[Login Error] Admin account tried to sign in via user portal.');
+        await _requiredAuth.signOut();
+        throw FirebaseAuthException(code: 'admin-user-portal');
+      }
     } catch (e) {
       _logAuth('[Login Error] Profile check failed: $e');
       if (_requiredAuth.currentUser?.uid == user.uid) {
@@ -154,6 +159,11 @@ class AuthCubit extends Cubit<AuthState> {
         _logAuth('[Access Denied] User role is "$role", required: "admin".');
         throw FirebaseAuthException(code: 'not-admin');
       }
+      if (!adminOnly && role == 'admin') {
+        _logAuth('[Access Denied] Admin account tried to sign in via user portal.');
+        await GoogleSignIn.instance.signOut();
+        throw FirebaseAuthException(code: 'admin-user-portal');
+      }
       final customToken = session['firebaseCustomToken'] as String?;
       if (customToken == null || customToken.isEmpty) {
         _logAuth('[Step 4/5 Error] Backend response missing firebaseCustomToken.');
@@ -166,7 +176,9 @@ class AuthCubit extends Cubit<AuthState> {
         final claims =
             (await _requiredAuth.currentUser!.getIdTokenResult(true)).claims ??
                 const {};
+        _logAuth('[Admin Check] Firebase token claims: $claims, admin=${claims['admin']}');
         if (claims['admin'] != true) {
+          _logAuth('[Access Denied] Firebase claims do not have admin=true. Signing out.');
           await _requiredAuth.signOut();
           throw FirebaseAuthException(code: 'not-admin');
         }
@@ -220,11 +232,12 @@ class AuthCubit extends Cubit<AuthState> {
       _logAuth('[Auth Error] GoogleSignInException: code=${error.code.name}, description=${error.description}');
       final message = switch (error.code) {
         GoogleSignInExceptionCode.canceled =>
-          'Google sign-in was cancelled before authentication completed. If you selected an account, check that this Android app has its SHA fingerprints registered in Firebase, then download the updated google-services.json.',
-        GoogleSignInExceptionCode.clientConfigurationError => 'Google sign-in setup is incomplete. Add the Android SHA-1 fingerprint in Firebase Project settings, then rebuild.',
+          'Google sign-in was cancelled. Tap Continue with Google to try again.',
+        GoogleSignInExceptionCode.clientConfigurationError =>
+          'Google sign-in is not configured correctly. Please try again later.',
         GoogleSignInExceptionCode.providerConfigurationError =>
-          'Google sign-in is not enabled for this Firebase project.',
-        _ => 'Google sign-in could not start. Check the app configuration and try again.',
+          'Google sign-in is temporarily unavailable. Please try again later.',
+        _ => 'We could not sign you in with Google. Please try again or use email and password.',
       };
       emit(AuthState(message: message));
       return false;
@@ -251,6 +264,8 @@ class AuthCubit extends Cubit<AuthState> {
       'Connection problem. Check your internet and try again.',
     'popup-closed-by-user' => 'Google sign-in was cancelled.',
     'not-admin' => 'This account does not have administrator access.',
+    'admin-user-portal' => 'This email is registered as an administrator. Please sign in via the Admin sign-in page.',
+    'admin_account_exists' => 'This email is registered as an administrator. Please sign in via the Admin sign-in page.',
     'operation-not-allowed' =>
       'Email and password sign-in is disabled. In Firebase Console, open Authentication > Sign-in method, enable Email/Password, and save.',
     _ => 'Unable to sign in. Please check your details and try again.',
