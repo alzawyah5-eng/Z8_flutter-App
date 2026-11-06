@@ -24,9 +24,6 @@ class NotificationService {
   static final FirebaseMessaging _messaging = FirebaseMessaging.instance;
   static const MethodChannel _notificationChannel =
       MethodChannel('com.nakhba.z8_portal/notifications');
-  static StreamSubscription<RemoteMessage>? _foregroundSubscription;
-  static StreamSubscription<RemoteMessage>? _openedSubscription;
-  static StreamSubscription<String>? _tokenSubscription;
   static String? _registeredToken;
   static bool _initialized = false;
 
@@ -34,14 +31,19 @@ class NotificationService {
     if (_initialized || kIsWeb) return;
     _initialized = true;
     FirebaseMessaging.onBackgroundMessage(z8FirebaseMessagingBackgroundHandler);
+    final showForegroundBanner = defaultTargetPlatform == TargetPlatform.iOS;
     await _messaging.setForegroundNotificationPresentationOptions(
-      alert: false,
-      badge: false,
-      sound: false,
+      alert: showForegroundBanner,
+      badge: showForegroundBanner,
+      sound: showForegroundBanner,
     );
-    _foregroundSubscription = FirebaseMessaging.onMessage.listen(_showForeground);
-    _openedSubscription = FirebaseMessaging.onMessageOpenedApp.listen(_openMessage);
-    _tokenSubscription = _messaging.onTokenRefresh.listen((token) {
+    FirebaseMessaging.onMessage.listen(_showForeground);
+    FirebaseMessaging.onMessageOpenedApp.listen(_openMessage);
+    // Firebase Installation IDs are not accepted by Firebase Admin's FCM
+    // sendEachForMulticast API; retain legacy registration tokens until the
+    // server and all installed clients support a compatible delivery path.
+    // ignore: deprecated_member_use
+    _messaging.onTokenRefresh.listen((token) {
       unawaited(_registerToken(token));
     });
     final initialMessage = await _messaging.getInitialMessage();
@@ -65,6 +67,7 @@ class NotificationService {
         }
         if (await _messaging.getAPNSToken() == null) return;
       }
+      // ignore: deprecated_member_use
       final token = await _messaging.getToken();
       if (token != null) await _registerToken(token);
     } catch (_) {
@@ -121,6 +124,7 @@ class NotificationService {
       );
     }
 
+    // ignore: deprecated_member_use
     final token = await _messaging.getToken();
     if (token == null || token.isEmpty) {
       throw const BackendApiException(

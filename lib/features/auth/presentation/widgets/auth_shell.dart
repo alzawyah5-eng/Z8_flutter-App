@@ -164,10 +164,7 @@ class _CompactBrand extends StatelessWidget {
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'Z8 Card Manager',
-              style: TextStyle(fontWeight: FontWeight.w700),
-            ),
+            Text('Z8 Portal', style: TextStyle(fontWeight: FontWeight.w700)),
             Text(
               'Card programme console',
               style: TextStyle(color: AppTheme.muted, fontSize: 12),

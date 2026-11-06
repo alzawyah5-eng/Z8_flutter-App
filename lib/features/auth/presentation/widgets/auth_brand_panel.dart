@@ -37,7 +37,7 @@ class AuthBrandPanel extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Z8 Card Manager',
+                            'Z8 Portal',
                             style: TextStyle(
                               color: Colors.white,
                               fontWeight: FontWeight.w700,

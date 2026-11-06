@@ -16,12 +16,14 @@ class AuthState {
     this.message,
     this.signedIn = false,
     this.userNotRegistered = false,
+    this.registrationEmail,
   });
 
   final bool isSubmitting;
   final String? message;
   final bool signedIn;
   final bool userNotRegistered;
+  final String? registrationEmail;
 }
 
 class AuthCubit extends Cubit<AuthState> {
@@ -36,54 +38,132 @@ class AuthCubit extends Cubit<AuthState> {
     if (state.message != null) emit(const AuthState());
   }
 
-  Future<bool> register(String email, String password) async => _run(() async {
-    _logAuth('[1/4 Register] Starting Firebase Auth registration for "$email"...');
-    final credential = await _requiredAuth.createUserWithEmailAndPassword(
-      email: email.trim(),
-      password: password,
-    );
-    final user = credential.user!;
-    _logAuth('[2/4 Register] Firebase user created: UID=${user.uid}, email=${user.email}');
+  Future<bool> register(String email, String password) async {
+    if (state.isSubmitting) return false;
+    final normalizedEmail = email.trim();
+    emit(const AuthState(isSubmitting: true));
     try {
-      final token = (await user.getIdToken(true))!;
-      _logAuth('[3/4 Register] Registering user profile with Backend API at ${BackendApi.baseUrl}/me ...');
-      final profile = await BackendApi.registerOrGetMe(token);
-      _logAuth('[3/4 Register] Backend registered user successfully! Role: ${profile['role']}');
-      await user.getIdToken(true);
-      _logAuth('[4/4 Register] Sending email verification to "$email"...');
-      await user.sendEmailVerification();
-      _logAuth('[4/4 Register] Email verification sent.');
-    } catch (e) {
-      _logAuth('[Register Error] Backend/Verification step failed: $e. Signing out.');
-      await _requiredAuth.signOut();
-      rethrow;
+      _logAuth(
+        '[1/2 Register] Creating an Argon2id password account through the Z8 API...',
+      );
+      await BackendApi.registerWithPassword(normalizedEmail, password);
+      _logAuth('[2/2 Register] Account created; email verification code sent.');
+      emit(AuthState(registrationEmail: normalizedEmail));
+    } on BackendApiException catch (error) {
+      _logAuth(
+        '[Register Error] Backend code=${error.code}, status=${error.statusCode}.',
+      );
+      emit(AuthState(message: error.message));
+    } catch (error) {
+      _logAuth('[Register Error] Unexpected error: $error');
+      emit(
+        const AuthState(
+          message: 'We could not create your account. Please try again.',
+        ),
+      );
     }
+    return false;
+  }
+
+  Future<bool> verifyRegistration(String email, String code) => _run(() async {
+    final session = await BackendApi.verifyPasswordRegistration(
+      email.trim(),
+      code.trim(),
+    );
+    final customToken = session['firebaseCustomToken'] as String?;
+    if (customToken == null || customToken.isEmpty) {
+      throw const BackendApiException(
+        'invalid_response',
+        'The Z8 service returned an invalid session.',
+      );
+    }
+    await _requiredAuth.signInWithCustomToken(customToken);
+    _logAuth(
+      '[Registration] Email verification passed; custom session established.',
+    );
     return null;
   });
+
+  Future<bool> resendRegistrationCode(String email) async {
+    if (state.isSubmitting) return false;
+    emit(const AuthState(isSubmitting: true));
+    try {
+      await BackendApi.resendRegistrationCode(email.trim());
+      emit(
+        AuthState(
+          registrationEmail: email.trim(),
+          message:
+              'If the account needs verification, a new code has been sent.',
+        ),
+      );
+      return true;
+    } on BackendApiException catch (error) {
+      emit(AuthState(registrationEmail: email.trim(), message: error.message));
+      return false;
+    } catch (_) {
+      emit(
+        AuthState(
+          registrationEmail: email.trim(),
+          message: 'We could not send a new code. Please try again.',
+        ),
+      );
+      return false;
+    }
+  }
 
   Future<bool> login(
     String email,
     String password, {
     bool admin = false,
   }) async => _run(() async {
-    _logAuth('[1/3 Login] Starting email login for "$email" (admin: $admin)...');
-    final credential = await _requiredAuth.signInWithEmailAndPassword(
-      email: email.trim(),
-      password: password,
+    _logAuth(
+      '[1/3 Login] Starting email login for "$email" (admin: $admin)...',
     );
-    final user = credential.user!;
-    _logAuth('[2/3 Login] Firebase authenticated: UID=${user.uid}. Verifying profile with Backend...');
+    late Map<String, dynamic> session;
     try {
-      final profile = await BackendApi.getMe((await user.getIdToken())!);
-      _logAuth('[3/3 Login] Backend confirmed user profile: Role: ${profile['role'] ?? 'unknown'}');
-      await user.getIdToken(true);
+      session = await BackendApi.loginWithPassword(email.trim(), password);
+    } on BackendApiException catch (error) {
+      if (error.code != 'password_migration_required') rethrow;
+      _logAuth(
+        '[2/4 Login] Migrating this legacy password to the PostgreSQL Argon2id hash...',
+      );
+      final legacy = await _requiredAuth.signInWithEmailAndPassword(
+        email: email.trim(),
+        password: password,
+      );
+      final legacyToken = await legacy.user!.getIdToken(true);
+      if (legacyToken == null)
+        throw FirebaseAuthException(code: 'invalid-credential');
+      await BackendApi.migrateLegacyPassword(legacyToken, password);
+      await _requiredAuth.signOut();
+      session = await BackendApi.loginWithPassword(email.trim(), password);
+    }
+    final customToken = session['firebaseCustomToken'] as String?;
+    if (customToken == null || customToken.isEmpty) {
+      throw const BackendApiException(
+        'invalid_response',
+        'The Z8 service returned an invalid session.',
+      );
+    }
+    final credential = await _requiredAuth.signInWithCustomToken(customToken);
+    final user = credential.user!;
+    _logAuth(
+      '[2/3 Login] Argon2id password verified; checking PostgreSQL role...',
+    );
+    try {
+      final profile = await BackendApi.getMe((await user.getIdToken(true))!);
+      _logAuth(
+        '[3/3 Login] Backend confirmed role: ${profile['role'] ?? 'unknown'}',
+      );
       if (admin && profile['role'] != 'admin') {
         _logAuth('[Login Error] User is not an admin.');
         await _requiredAuth.signOut();
         throw FirebaseAuthException(code: 'not-admin');
       }
       if (!admin && profile['role'] == 'admin') {
-        _logAuth('[Login Error] Admin account tried to sign in via user portal.');
+        _logAuth(
+          '[Login Error] Admin account tried to sign in via user portal.',
+        );
         await _requiredAuth.signOut();
         throw FirebaseAuthException(code: 'admin-user-portal');
       }
@@ -97,23 +177,44 @@ class AuthCubit extends Cubit<AuthState> {
     return null;
   });
 
-  Future<bool> resetPassword(String email) async => _run(() async {
-    _logAuth('Sending password reset email to "$email"...');
-    await _requiredAuth.sendPasswordResetEmail(email: email.trim());
-    return 'If an account exists for that email, a reset link has been sent.';
-  });
+  Future<void> requestPasswordReset(String email) async {
+    await _run(() async {
+      _logAuth('Requesting a Z8 password reset code...');
+      await BackendApi.requestPasswordReset(email.trim());
+      return null;
+    });
+  }
+
+  Future<void> confirmPasswordReset({
+    required String email,
+    required String token,
+    required String password,
+  }) async {
+    await _run(() async {
+      final result = await BackendApi.confirmPasswordReset(
+        email: email.trim(),
+        token: token.trim(),
+        password: password,
+      );
+      return result['message'] as String? ?? 'Your password has been reset.';
+    });
+  }
 
   Future<bool> continueWithGoogle({bool adminOnly = false}) async {
     return _run(() async {
       _logAuth('--- GOOGLE SIGN-IN FLOW STARTED ---');
-      _logAuth('[Step 1/5] Platform: ${defaultTargetPlatform.name}, adminOnly: $adminOnly');
+      _logAuth(
+        '[Step 1/5] Platform: ${defaultTargetPlatform.name}, adminOnly: $adminOnly',
+      );
       if (kIsWeb) {
         throw const BackendApiException(
           'unsupported_platform',
           'Use the Z8 mobile app to sign in with Google.',
         );
       }
-      _logAuth('[Step 1/5] Initializing GoogleSignIn (serverClientId: ${FirebaseConfig.googleServerClientId})...');
+      _logAuth(
+        '[Step 1/5] Initializing GoogleSignIn (serverClientId: ${FirebaseConfig.googleServerClientId})...',
+      );
       await _initializeNativeGoogleSignIn();
       _logAuth('[Step 2/5] Opening Google account picker dialog...');
       await GoogleSignIn.instance.signOut();
@@ -130,9 +231,14 @@ class AuthCubit extends Cubit<AuthState> {
         final parts = idToken.split('.');
         if (parts.length == 3) {
           final normalized = base64Url.normalize(parts[1]);
-          final payload = jsonDecode(utf8.decode(base64Url.decode(normalized))) as Map<String, dynamic>;
+          final payload = jsonDecode(
+            utf8.decode(base64Url.decode(normalized)),
+          ) as Map<String, dynamic>;
           final expSec = payload['exp'] as int?;
-          final expDate = expSec != null ? DateTime.fromMillisecondsSinceEpoch(expSec * 1000).toIso8601String() : 'unknown';
+          final expDate = expSec != null
+              ? DateTime.fromMillisecondsSinceEpoch(expSec * 1000)
+                    .toIso8601String()
+              : 'unknown';
           _logAuth(
             '[Step 3/5 Token Claims] aud: "${payload['aud']}", '
             'iss: "${payload['iss']}", '
@@ -141,16 +247,24 @@ class AuthCubit extends Cubit<AuthState> {
           );
         }
       } catch (err) {
-        _logAuth('[Step 3/5 Warning] Could not parse unverified token payload: $err');
+        _logAuth(
+          '[Step 3/5 Warning] Could not parse unverified token payload: $err',
+        );
       }
 
-      _logAuth('[Step 4/5] Sending ID token to backend: POST ${BackendApi.baseUrl}/auth/google/session ...');
+      _logAuth(
+        '[Step 4/5] Sending ID token to backend: POST ${BackendApi.baseUrl}/auth/google/session ...',
+      );
       late final Map<String, dynamic> session;
       try {
         session = await BackendApi.exchangeGoogleIdToken(idToken);
-        _logAuth('[Step 4/5 Success] Backend verified token! Account role: ${session['role']}, email: ${session['email']}');
+        _logAuth(
+          '[Step 4/5 Success] Backend verified token! Account role: ${session['role']}, email: ${session['email']}',
+        );
       } on BackendApiException catch (error) {
-        _logAuth('[Step 4/5 Rejection] Backend returned error: ${error.toString()} (statusCode: ${error.statusCode})');
+        _logAuth(
+          '[Step 4/5 Rejection] Backend returned error: ${error.toString()} (statusCode: ${error.statusCode})',
+        );
         await GoogleSignIn.instance.signOut();
         rethrow;
       }
@@ -160,25 +274,37 @@ class AuthCubit extends Cubit<AuthState> {
         throw FirebaseAuthException(code: 'not-admin');
       }
       if (!adminOnly && role == 'admin') {
-        _logAuth('[Access Denied] Admin account tried to sign in via user portal.');
+        _logAuth(
+          '[Access Denied] Admin account tried to sign in via user portal.',
+        );
         await GoogleSignIn.instance.signOut();
         throw FirebaseAuthException(code: 'admin-user-portal');
       }
       final customToken = session['firebaseCustomToken'] as String?;
       if (customToken == null || customToken.isEmpty) {
-        _logAuth('[Step 4/5 Error] Backend response missing firebaseCustomToken.');
+        _logAuth(
+          '[Step 4/5 Error] Backend response missing firebaseCustomToken.',
+        );
         throw FirebaseAuthException(code: 'invalid-credential');
       }
-      _logAuth('[Step 5/5] Signing into Firebase Auth with returned custom token...');
+      _logAuth(
+        '[Step 5/5] Signing into Firebase Auth with returned custom token...',
+      );
       final cred = await _requiredAuth.signInWithCustomToken(customToken);
-      _logAuth('[Step 5/5 Success] Firebase Auth sign-in successful! User UID: ${cred.user?.uid}');
+      _logAuth(
+        '[Step 5/5 Success] Firebase Auth sign-in successful! User UID: ${cred.user?.uid}',
+      );
       if (adminOnly) {
         final claims =
             (await _requiredAuth.currentUser!.getIdTokenResult(true)).claims ??
-                const {};
-        _logAuth('[Admin Check] Firebase token claims: $claims, admin=${claims['admin']}');
+            const {};
+        _logAuth(
+          '[Admin Check] Firebase token claims: $claims, admin=${claims['admin']}',
+        );
         if (claims['admin'] != true) {
-          _logAuth('[Access Denied] Firebase claims do not have admin=true. Signing out.');
+          _logAuth(
+            '[Access Denied] Firebase claims do not have admin=true. Signing out.',
+          );
           await _requiredAuth.signOut();
           throw FirebaseAuthException(code: 'not-admin');
         }
@@ -218,21 +344,28 @@ class AuthCubit extends Cubit<AuthState> {
       emit(AuthState(message: message, signedIn: signedIn));
       return signedIn;
     } on FirebaseAuthException catch (error) {
-      _logAuth('[Auth Error] FirebaseAuthException: code=${error.code}, message=${error.message}');
+      _logAuth(
+        '[Auth Error] FirebaseAuthException: code=${error.code}, message=${error.message}',
+      );
       emit(AuthState(message: _messageFor(error.code)));
       return false;
     } on BackendApiException catch (error) {
-      _logAuth('[Auth Error] BackendApiException: code=${error.code}, status=${error.statusCode}, message=${error.toString()}');
-      emit(AuthState(
-        message: error.message,
-        userNotRegistered: error.code == 'user_not_registered',
-      ));
+      _logAuth(
+        '[Auth Error] BackendApiException: code=${error.code}, status=${error.statusCode}, message=${error.toString()}',
+      );
+      emit(
+        AuthState(
+          message: error.message,
+          userNotRegistered: error.code == 'user_not_registered',
+        ),
+      );
       return false;
     } on GoogleSignInException catch (error) {
-      _logAuth('[Auth Error] GoogleSignInException: code=${error.code.name}, description=${error.description}');
+      _logAuth(
+        '[Auth Error] GoogleSignInException: code=${error.code.name}, description=${error.description}',
+      );
       final message = switch (error.code) {
-        GoogleSignInExceptionCode.canceled =>
-          'Google sign-in was cancelled. Tap Continue with Google to try again.',
+        GoogleSignInExceptionCode.canceled => 'Google sign-in was cancelled. Tap Continue with Google to try again.',
         GoogleSignInExceptionCode.clientConfigurationError =>
           'Google sign-in is not configured correctly. Please try again later.',
         GoogleSignInExceptionCode.providerConfigurationError =>
@@ -266,8 +399,7 @@ class AuthCubit extends Cubit<AuthState> {
     'not-admin' => 'This account does not have administrator access.',
     'admin-user-portal' => 'This email is registered as an administrator. Please sign in via the Admin sign-in page.',
     'admin_account_exists' => 'This email is registered as an administrator. Please sign in via the Admin sign-in page.',
-    'operation-not-allowed' =>
-      'Email and password sign-in is disabled. In Firebase Console, open Authentication > Sign-in method, enable Email/Password, and save.',
+    'operation-not-allowed' => 'Email and password sign-in is disabled. In Firebase Console, open Authentication > Sign-in method, enable Email/Password, and save.',
     _ => 'Unable to sign in. Please check your details and try again.',
   };
 }

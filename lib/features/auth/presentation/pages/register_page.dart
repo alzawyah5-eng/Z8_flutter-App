@@ -25,8 +25,17 @@ class _RegisterPageState extends State<RegisterPage> {
   Future<void> _submit() async {
     FocusScope.of(context).unfocus();
     if (_formKey.currentState!.validate()) {
-      final success = await context.read<AuthCubit>().register(_email.text, _password.text);
-      if (success && mounted) Navigator.pushReplacementNamed(context, '/signed-in');
+      final success = await context.read<AuthCubit>().register(
+        _email.text,
+        _password.text,
+      );
+      if (success && mounted)
+        Navigator.pushReplacementNamed(context, '/signed-in');
+      if (!success && mounted) {
+        final email = context.read<AuthCubit>().state.registrationEmail;
+        if (email != null)
+          Navigator.pushNamed(context, '/verify-email', arguments: email);
+      }
     }
   }
 
@@ -81,7 +90,8 @@ class _RegisterPageState extends State<RegisterPage> {
                 hintText: '••••••••',
                 textInputAction: TextInputAction.done,
                 validator: (value) {
-                  if (value == null || value.isEmpty) return 'Confirm your password.';
+                  if (value == null || value.isEmpty)
+                    return 'Confirm your password.';
                   if (value != _password.text) return 'Passwords do not match.';
                   return null;
                 },

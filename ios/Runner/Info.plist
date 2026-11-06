@@ -40,6 +40,8 @@
 	<true/>
 	<key>FirebaseMessagingAutoInitEnabled</key>
 	<true/>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Z8 Portal uses selected ID photos to submit identity verification.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>fetch</string>
