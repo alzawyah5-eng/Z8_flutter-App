@@ -682,142 +682,147 @@ extension _WorkspaceCardVerificationSections on _WorkspacePageState {
                           color: Theme.of(context).colorScheme.error,
                         ),
                       ),
+                    const SizedBox(height: 12),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        TextButton(
+                          onPressed: submitting ? null : () => Navigator.pop(dialogContext),
+                          child: const Text('Cancel'),
+                        ),
+                        FilledButton(
+                          onPressed: submitting
+                              ? null
+                              : () async {
+                                  if (!key.currentState!.validate()) return;
+                                  final mobileDigits = controllers['mobilePrefix']!.text
+                                      .replaceAll(RegExp(r'[^0-9]'), '');
+                                  final phone = controllers['mobile']!.text.replaceAll(
+                                    RegExp(r'\D'),
+                                    '',
+                                  );
+                                  if (phone.isNotEmpty &&
+                                      !RegExp(r'^\d{1,4}$').hasMatch(mobileDigits)) {
+                                    setDialog(
+                                      () => photoWarning = 'Choose a valid country calling code, such as +971.',
+                                    );
+                                    return;
+                                  }
+                                  if (needsMobile && phone.isEmpty) {
+                                    setDialog(() => photoWarning = 'Add a mobile number because your login email is longer than PhotonPay allows.');
+                                    return;
+                                  }
+                                  if (phone.isNotEmpty && phone.length > 11) {
+                                    setDialog(() => photoWarning = 'Mobile number may have at most 11 digits.');
+                                    return;
+                                  }
+                                  if (front == null ||
+                                      (controllers['certType']!.text != 'passport' &&
+                                          back == null)) {
+                                    setDialog(
+                                      () => photoWarning = 'Choose the required ID photos.',
+                                    );
+                                    return;
+                                  }
+                                  for (final photo in [front, back].whereType<XFile>()) {
+                                    final mime = (photo.mimeType ?? '').toLowerCase();
+                                    final name = photo.name.toLowerCase();
+                                    final isJpeg = mime == 'image/jpeg' || name.endsWith('.jpg') || name.endsWith('.jpeg');
+                                    final isPng = mime == 'image/png' || name.endsWith('.png');
+                                    if (!isJpeg && !isPng) {
+                                      setDialog(() => photoWarning = 'Use a JPG or PNG ID photo.');
+                                      return;
+                                    }
+                                    if (await photo.length() > 6 * 1024 * 1024) {
+                                      setDialog(() => photoWarning = 'Each ID photo must be 6 MB or smaller. Choose a smaller photo.');
+                                      return;
+                                    }
+                                  }
+                                  setDialog(() {
+                                    submitting = true;
+                                    photoWarning = 'Uploading privately…';
+                                  });
+                                  try {
+                                    final token = await _token();
+                                    final frontData = base64Encode(
+                                      await front!.readAsBytes(),
+                                    );
+                                    final frontResult = await BackendApi.photonPayAction(
+                                      token,
+                                      'store_id_photo',
+                                      payload: {
+                                        'dataBase64': frontData,
+                                        'fileName': front!.name,
+                                        'mimeType': front!.mimeType ?? 'image/jpeg',
+                                      },
+                                    );
+                                    final backResult = back == null
+                                        ? <String, dynamic>{}
+                                        : await BackendApi.photonPayAction(
+                                            token,
+                                            'store_id_photo',
+                                            payload: {
+                                              'dataBase64': base64Encode(
+                                                await back!.readAsBytes(),
+                                              ),
+                                              'fileName': back!.name,
+                                              'mimeType': back!.mimeType ?? 'image/jpeg',
+                                            },
+                                          );
+                                    selected.addAll({
+                                      for (final e in controllers.entries)
+                                        e.key: e.value.text.trim(),
+                                    });
+                                    selected['mobilePrefix'] = mobileDigits.isEmpty
+                                        ? ''
+                                        : '+$mobileDigits';
+                                    selected['mobile'] = phone;
+                                    final result = await BackendApi.photonPayAction(
+                                      token,
+                                      'submit_registration',
+                                      payload: {
+                                        ...selected,
+                                        'frontPhotoToken': frontResult['photo_token'],
+                                        'backPhotoToken': backResult['photo_token'] ?? '',
+                                      },
+                                    );
+                                    if (result['error'] != null)
+                                      throw Exception(result['error']);
+                                    if (dialogContext.mounted) Navigator.pop(dialogContext);
+                                    if (mounted)
+                                      _updateWorkspace(() {
+                                        _notice = 'Verification submitted for review.';
+                                        _reloadSection();
+                                      });
+                                  } catch (error) {
+                                    setDialog(() {
+                                      submitting = false;
+                                      photoWarning = _friendly(error);
+                                    });
+                                  }
+                                },
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (submitting) ...[
+                                const SizedBox.square(
+                                  dimension: 18,
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                ),
+                                const SizedBox(width: 8),
+                              ],
+                              Text(submitting ? 'Submitting…' : 'Submit'),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                   ],
                 ),
               ),
             ),
           ),
-          actions: [
-            TextButton(
-              onPressed: submitting ? null : () => Navigator.pop(dialogContext),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: submitting
-                  ? null
-                  : () async {
-                      if (!key.currentState!.validate()) return;
-                      final mobileDigits = controllers['mobilePrefix']!.text
-                          .replaceAll(RegExp(r'[^0-9]'), '');
-                      final phone = controllers['mobile']!.text.replaceAll(
-                        RegExp(r'\D'),
-                        '',
-                      );
-                      if (phone.isNotEmpty &&
-                          !RegExp(r'^\d{1,4}$').hasMatch(mobileDigits)) {
-                        setDialog(
-                          () => photoWarning = 'Choose a valid country calling code, such as +971.',
-                        );
-                        return;
-                      }
-                      if (needsMobile && phone.isEmpty) {
-                        setDialog(() => photoWarning = 'Add a mobile number because your login email is longer than PhotonPay allows.');
-                        return;
-                      }
-                      if (phone.isNotEmpty && phone.length > 11) {
-                        setDialog(() => photoWarning = 'Mobile number may have at most 11 digits.');
-                        return;
-                      }
-                      if (front == null ||
-                          (controllers['certType']!.text != 'passport' &&
-                              back == null)) {
-                        setDialog(
-                          () => photoWarning = 'Choose the required ID photos.',
-                        );
-                        return;
-                      }
-                      for (final photo in [front, back].whereType<XFile>()) {
-                        final mime = (photo.mimeType ?? '').toLowerCase();
-                        final name = photo.name.toLowerCase();
-                        final isJpeg = mime == 'image/jpeg' || name.endsWith('.jpg') || name.endsWith('.jpeg');
-                        final isPng = mime == 'image/png' || name.endsWith('.png');
-                        if (!isJpeg && !isPng) {
-                          setDialog(() => photoWarning = 'Use a JPG or PNG ID photo.');
-                          return;
-                        }
-                        if (await photo.length() > 6 * 1024 * 1024) {
-                          setDialog(() => photoWarning = 'Each ID photo must be 6 MB or smaller. Choose a smaller photo.');
-                          return;
-                        }
-                      }
-                      setDialog(() {
-                        submitting = true;
-                        photoWarning = 'Uploading privately…';
-                      });
-                      try {
-                        final token = await _token();
-                        final frontData = base64Encode(
-                          await front!.readAsBytes(),
-                        );
-                        final frontResult = await BackendApi.photonPayAction(
-                          token,
-                          'store_id_photo',
-                          payload: {
-                            'dataBase64': frontData,
-                            'fileName': front!.name,
-                            'mimeType': front!.mimeType ?? 'image/jpeg',
-                          },
-                        );
-                        final backResult = back == null
-                            ? <String, dynamic>{}
-                            : await BackendApi.photonPayAction(
-                                token,
-                                'store_id_photo',
-                                payload: {
-                                  'dataBase64': base64Encode(
-                                    await back!.readAsBytes(),
-                                  ),
-                                  'fileName': back!.name,
-                                  'mimeType': back!.mimeType ?? 'image/jpeg',
-                                },
-                              );
-                        selected.addAll({
-                          for (final e in controllers.entries)
-                            e.key: e.value.text.trim(),
-                        });
-                        selected['mobilePrefix'] = mobileDigits.isEmpty
-                            ? ''
-                            : '+$mobileDigits';
-                        selected['mobile'] = phone;
-                        final result = await BackendApi.photonPayAction(
-                          token,
-                          'submit_registration',
-                          payload: {
-                            ...selected,
-                            'frontPhotoToken': frontResult['photo_token'],
-                            'backPhotoToken': backResult['photo_token'] ?? '',
-                          },
-                        );
-                        if (result['error'] != null)
-                          throw Exception(result['error']);
-                        if (dialogContext.mounted) Navigator.pop(dialogContext);
-                        if (mounted)
-                          _updateWorkspace(() {
-                            _notice = 'Verification submitted for review.';
-                            _reloadSection();
-                          });
-                      } catch (error) {
-                        setDialog(() {
-                          submitting = false;
-                          photoWarning = _friendly(error);
-                        });
-                      }
-                    },
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (submitting) ...[
-                    const SizedBox.square(
-                      dimension: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                    const SizedBox(width: 8),
-                  ],
-                  Text(submitting ? 'Submitting…' : 'Submit'),
-                ],
-              ),
-            ),
-          ],
+
         ),
       ),
     );

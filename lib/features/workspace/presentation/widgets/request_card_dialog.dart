@@ -126,7 +126,7 @@ class _RequestCardDialogState extends State<RequestCardDialog> {
     final state = widget.requestState;
     final canRequest = state['can_request'] == true;
     return AlertDialog(
-      scrollable: true,
+      scrollable: false,
       title: Row(
         children: [
           Icon(
@@ -153,15 +153,13 @@ class _RequestCardDialogState extends State<RequestCardDialog> {
             ? Text(
                 '${state['reason'] ?? 'Card requests are not available right now.'}',
               )
-            : _formContents(),
+            : _formWithActions(),
       ),
       actions: _complete
           ? [
               FilledButton(
-                onPressed: () => Navigator.pop(
-                  context,
-                  RequestCardDialogResult.requested,
-                ),
+                onPressed: () =>
+                    Navigator.pop(context, RequestCardDialogResult.requested),
                 child: const Text('Done'),
               ),
             ]
@@ -172,10 +170,8 @@ class _RequestCardDialogState extends State<RequestCardDialog> {
                 child: const Text('Not now'),
               ),
               FilledButton.icon(
-                onPressed: () => Navigator.pop(
-                  context,
-                  RequestCardDialogResult.addFunds,
-                ),
+                onPressed: () =>
+                    Navigator.pop(context, RequestCardDialogResult.addFunds),
                 icon: const Icon(Icons.savings_rounded),
                 label: const Text('Add funds'),
               ),
@@ -187,25 +183,39 @@ class _RequestCardDialogState extends State<RequestCardDialog> {
                 child: const Text('Close'),
               ),
             ]
-          : [
-              TextButton(
-                onPressed: _busy ? null : () => Navigator.pop(context),
-                child: const Text('Cancel'),
-              ),
-              FilledButton.icon(
-                onPressed: _busy ? null : _submit,
-                icon: _busy
-                    ? const SizedBox.square(
-                        dimension: 17,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.send_rounded),
-                label: Text(_busy ? 'Sending…' : 'Send request'),
-              ),
-            ],
+          : [],
     );
   }
 
+  Widget _formWithActions() => SingleChildScrollView(
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _formContents(),
+        const SizedBox(height: 12),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            TextButton(
+              onPressed: _busy ? null : () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            const SizedBox(width: 8),
+            FilledButton.icon(
+              onPressed: _busy ? null : _submit,
+              icon: _busy
+                  ? const SizedBox.square(
+                      dimension: 17,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.send_rounded),
+              label: Text(_busy ? 'Sending…' : 'Send request'),
+            ),
+          ],
+        ),
+      ],
+    ),
+  );
   Widget _fundingNeededContent(Map<String, dynamic> state) {
     final ladder = state['ladder'] as List? ?? const [];
     final tier = '${state['tier'] ?? ''}';

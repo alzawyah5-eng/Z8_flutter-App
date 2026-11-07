@@ -422,6 +422,11 @@ class _WorkspacePageState extends State<WorkspacePage> {
                             ? InputDecorator(
                                 decoration: InputDecoration(
                                   labelText: field.label,
+                                  labelStyle: field.key == 'deviceCountry'
+                                      ? const TextStyle(
+                                          fontWeight: FontWeight.w700,
+                                        )
+                                      : null,
                                   helperText: field.helperText,
                                 ),
                                 child: Text(field.staticValue!),
@@ -588,49 +593,58 @@ class _WorkspacePageState extends State<WorkspacePage> {
                         color: Theme.of(context).colorScheme.error,
                       ),
                     ),
+                  const SizedBox(height: 12),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      TextButton(
+                        onPressed: busy
+                            ? null
+                            : () => Navigator.pop(dialogContext),
+                        child: const Text('Cancel'),
+                      ),
+                      FilledButton(
+                        onPressed: busy
+                            ? null
+                            : () async {
+                                if (!formKey.currentState!.validate()) return;
+                                setDialog(() => busy = true);
+                                try {
+                                  await onSubmit({
+                                    for (final entry in controllers.entries)
+                                      entry.key: entry.value.text.trim(),
+                                  });
+                                  if (dialogContext.mounted)
+                                    Navigator.pop(dialogContext);
+                                } catch (error) {
+                                  setDialog(() {
+                                    busy = false;
+                                    dialogError = _friendly(error);
+                                  });
+                                }
+                              },
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (busy) ...[
+                              const SizedBox.square(
+                                dimension: 17,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              ),
+                              const SizedBox(width: 9),
+                            ],
+                            Text(busy ? 'Saving…' : 'Save'),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
                 ],
               ),
             ),
           ),
-          actions: [
-            TextButton(
-              onPressed: busy ? null : () => Navigator.pop(dialogContext),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: busy
-                  ? null
-                  : () async {
-                      if (!formKey.currentState!.validate()) return;
-                      setDialog(() => busy = true);
-                      try {
-                        await onSubmit({
-                          for (final entry in controllers.entries)
-                            entry.key: entry.value.text.trim(),
-                        });
-                        if (dialogContext.mounted) Navigator.pop(dialogContext);
-                      } catch (error) {
-                        setDialog(() {
-                          busy = false;
-                          dialogError = _friendly(error);
-                        });
-                      }
-                    },
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (busy) ...[
-                    const SizedBox.square(
-                      dimension: 17,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                    const SizedBox(width: 9),
-                  ],
-                  Text(busy ? 'Saving…' : 'Save'),
-                ],
-              ),
-            ),
-          ],
         ),
       ),
     );
@@ -738,11 +752,13 @@ class _WorkspacePageState extends State<WorkspacePage> {
       if (maxLength != null && text.length > maxLength) {
         return 'Use $maxLength characters or fewer';
       }
-      if (field.key == 'mobile' && text.replaceAll(RegExp(r'\D'), '').length > 11) {
+      if (field.key == 'mobile' &&
+          text.replaceAll(RegExp(r'\D'), '').length > 11) {
         return 'Mobile number may have at most 11 digits';
       }
       return null;
     }
+
     if (field.country || field.dial) {
       return FormField<String>(
         initialValue: controller.text.isEmpty ? null : controller.text,
@@ -759,6 +775,9 @@ class _WorkspacePageState extends State<WorkspacePage> {
           child: InputDecorator(
             decoration: InputDecoration(
               labelText: field.label,
+              labelStyle: field.key == 'deviceCountry'
+                  ? const TextStyle(fontWeight: FontWeight.w700)
+                  : null,
               helperText: field.helperText,
               errorText: state.errorText,
               suffixIcon: const Icon(Icons.expand_more),
