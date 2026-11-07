@@ -3,16 +3,19 @@ import 'dart:convert';
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../../core/network/backend_api.dart';
 import '../../../core/notifications/notification_service.dart';
+import '../../../core/utils/date_time_format.dart';
 import 'country_options.dart';
 import 'presentation/bloc/workspace_navigation_cubit.dart';
 import 'presentation/widgets/request_card_dialog.dart';
-import 'presentation/widgets/push_test_card.dart';
 import 'presentation/widgets/workspace_bottom_bar.dart';
+import 'presentation/widgets/workspace_loading_state.dart';
+import 'presentation/widgets/secure_card_details_dialog.dart';
 part 'presentation/sections/workspace_overview_sections.dart';
 part 'presentation/sections/workspace_card_verification_sections.dart';
 part 'presentation/sections/workspace_client_admin_sections.dart';
@@ -21,7 +24,9 @@ part 'presentation/sections/workspace_account_sections.dart';
 /// Role-aware mobile workspace backed by the same PostgreSQL/API operations as
 /// the web app. Authorization remains enforced by the backend on every call.
 class WorkspacePage extends StatefulWidget {
-  const WorkspacePage({super.key});
+  const WorkspacePage({super.key, this.initialSection});
+
+  final String? initialSection;
 
   @override
   State<WorkspacePage> createState() => _WorkspacePageState();
@@ -34,7 +39,11 @@ class _WorkspacePageState extends State<WorkspacePage> {
   String? _error;
   String? _notice;
   bool _loading = true;
-  int get _revision => _navigationCubit.state.revision;
+  bool _refreshing = false;
+  bool _standaloneActionBusy = false;
+  String? _busyAction;
+  String? _busyCardId;
+  Future<dynamic>? _sectionFuture;
   String _cardStatusFilter = 'all';
   String _cardSearch = '';
   String _activityKindFilter = 'all';
@@ -105,6 +114,12 @@ class _WorkspacePageState extends State<WorkspacePage> {
       setState(() {
         _profile = data;
         _loading = false;
+        final allowed = _admin ? _adminSections : _userSections;
+        final requested = widget.initialSection;
+        if (requested != null && allowed.containsKey(requested)) {
+          _navigationCubit.openSection(requested);
+        }
+        _sectionFuture = _loadSection();
       });
       unawaitedRegisterPush();
     } catch (error) {
@@ -122,6 +137,20 @@ class _WorkspacePageState extends State<WorkspacePage> {
 
   void _updateWorkspace(VoidCallback update) {
     if (mounted) setState(update);
+  }
+
+  Future<dynamic> _reloadSection() {
+    final future = _loadSection();
+    _sectionFuture = future;
+    _navigationCubit.refresh();
+    return future;
+  }
+
+  void _navigateTo(String section) {
+    _navigationCubit.openSection(section);
+    _error = null;
+    _notice = null;
+    _reloadSection();
   }
 
   Future<dynamic> _loadSection() async {
@@ -216,7 +245,11 @@ class _WorkspacePageState extends State<WorkspacePage> {
       case 'verification':
         return await BackendApi.photonPayAction(token, 'my_registration');
       case 'wallet':
-        return await BackendApi.photonPayAction(token, 'my_wallet');
+        final values = await Future.wait([
+          BackendApi.photonPayAction(token, 'my_wallet'),
+          BackendApi.photonPayAction(token, 'my_registration'),
+        ]);
+        return {'wallet': values[0], 'registration': values[1]};
       case 'clients':
         final values = await Future.wait([
           BackendApi.queryEntity(
@@ -300,18 +333,33 @@ class _WorkspacePageState extends State<WorkspacePage> {
       : error.toString().replaceFirst('Exception: ', '');
 
   Future<void> _refresh() async {
-    setState(() {
-      _error = null;
-      _navigationCubit.refresh();
-    });
-    await _loadProfile();
+    if (mounted)
+      setState(() {
+        _error = null;
+        _refreshing = true;
+      });
+    try {
+      await _reloadSection();
+    } catch (_) {
+      // FutureBuilder renders the section error while preserving the page.
+    } finally {
+      if (mounted) setState(() => _refreshing = false);
+    }
   }
 
   Future<void> _call(
     String action, [
     Map<String, Object?> payload = const {},
   ]) async {
-    if (mounted) setState(() => _error = null);
+    final ownsProgress = _busyAction == null;
+    if (mounted)
+      setState(() {
+        _error = null;
+        if (ownsProgress) {
+          _busyAction = action;
+          _standaloneActionBusy = true;
+        }
+      });
     try {
       final result = await BackendApi.photonPayAction(
         await _token(),
@@ -323,11 +371,17 @@ class _WorkspacePageState extends State<WorkspacePage> {
       setState(() {
         _notice = 'Done';
         _error = null;
-        _navigationCubit.refresh();
+        _reloadSection();
       });
     } catch (error) {
       if (!mounted) return;
       setState(() => _error = _friendly(error));
+    } finally {
+      if (mounted && ownsProgress)
+        setState(() {
+          _busyAction = null;
+          _standaloneActionBusy = false;
+        });
     }
   }
 
@@ -561,7 +615,19 @@ class _WorkspacePageState extends State<WorkspacePage> {
                         });
                       }
                     },
-              child: Text(busy ? 'Saving…' : 'Save'),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (busy) ...[
+                    const SizedBox.square(
+                      dimension: 17,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    const SizedBox(width: 9),
+                  ],
+                  Text(busy ? 'Saving…' : 'Save'),
+                ],
+              ),
             ),
           ],
         ),
@@ -768,7 +834,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
     final request = Map<String, dynamic>.from(
       state['card_request'] as Map? ?? {},
     );
-    if (request['can_request'] != true) {
+    if (request['can_request'] != true && request['needs_funds'] != true) {
       if (!mounted) return;
       setState(
         () => _error =
@@ -777,7 +843,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
       return;
     }
     if (!mounted) return;
-    final completed = await showDialog<bool>(
+    final result = await showDialog<RequestCardDialogResult>(
       context: context,
       builder: (dialogContext) => RequestCardDialog(
         requestState: request,
@@ -793,11 +859,15 @@ class _WorkspacePageState extends State<WorkspacePage> {
         },
       ),
     );
-    if (completed == true && mounted) {
+    if (result == RequestCardDialogResult.addFunds) {
+      await _reportDeposit();
+      return;
+    }
+    if (result == RequestCardDialogResult.requested && mounted) {
       setState(() {
         _notice = 'Card request sent for review.';
         _error = null;
-        _navigationCubit.refresh();
+        _reloadSection();
       });
     }
   }
@@ -885,7 +955,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
       if (mounted)
         setState(() {
           _notice = 'Deposit reported for admin review.';
-          _navigationCubit.refresh();
+          _reloadSection();
         });
     },
   );
@@ -953,7 +1023,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
           if (mounted)
             setState(() {
               _notice = 'Client balance updated.';
-              _navigationCubit.refresh();
+              _reloadSection();
             });
         },
       );
@@ -1056,7 +1126,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
         if (mounted)
           setState(() {
             _notice = 'Cardholder registration submitted to PhotonPay.';
-            _navigationCubit.refresh();
+            _reloadSection();
           });
       },
     );
@@ -1212,7 +1282,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
       });
       setState(() {
         _notice = 'Card request sent to PhotonPay.';
-        _navigationCubit.refresh();
+        _reloadSection();
       });
     },
     initialValues: {'cardType': 'share'},
@@ -1226,64 +1296,106 @@ class _WorkspacePageState extends State<WorkspacePage> {
   }
 
   Future<void> _confirmLogout() async {
-    final confirmed = await showDialog<bool>(
+    await showDialog<void>(
       context: context,
-      builder: (dialogContext) => Dialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              DecoratedBox(
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.secondaryContainer,
-                  borderRadius: BorderRadius.circular(18),
-                ),
-                child: SizedBox(
-                  width: 54,
-                  height: 54,
-                  child: Icon(
-                    Icons.logout_rounded,
-                    color: Theme.of(context).colorScheme.primary,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              Text(
-                'Sign out of Z8?',
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Your session will end on this device. You can sign in again at any time.',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodyMedium,
-              ),
-              const SizedBox(height: 22),
-              Row(
+      builder: (dialogContext) {
+        var busy = false;
+        String? error;
+        return StatefulBuilder(
+          builder: (dialogContext, setDialogState) => Dialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(24),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => Navigator.pop(dialogContext, false),
-                      child: const Text('Stay signed in'),
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.secondaryContainer,
+                      borderRadius: BorderRadius.circular(18),
+                    ),
+                    child: SizedBox(
+                      width: 54,
+                      height: 54,
+                      child: Icon(
+                        Icons.logout_rounded,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
                     ),
                   ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: FilledButton(
-                      onPressed: () => Navigator.pop(dialogContext, true),
-                      child: const Text('Sign out'),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Sign out of Z8?',
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Your session will end on this device. You can sign in again at any time.',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                  if (error != null) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      error!,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
                     ),
+                  ],
+                  const SizedBox(height: 22),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: busy
+                              ? null
+                              : () => Navigator.pop(dialogContext),
+                          child: const Text('Stay signed in'),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: FilledButton(
+                          onPressed: busy
+                              ? null
+                              : () async {
+                                  setDialogState(() {
+                                    busy = true;
+                                    error = null;
+                                  });
+                                  try {
+                                    await _logout();
+                                  } catch (_) {
+                                    if (dialogContext.mounted) {
+                                      setDialogState(() {
+                                        busy = false;
+                                        error = 'Could not sign out. Please try again.';
+                                      });
+                                    }
+                                  }
+                                },
+                          child: busy
+                              ? const SizedBox.square(
+                                  dimension: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Text('Sign out'),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
-            ],
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
-    if (confirmed == true && mounted) await _logout();
   }
 
   @override
@@ -1294,8 +1406,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
       );
 
   Widget _buildWorkspace(BuildContext context) {
-    if (_loading)
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    if (_loading) return const Scaffold(body: WorkspaceLoadingState());
     if (_profile == null) {
       return Scaffold(
         body: Center(
@@ -1323,8 +1434,13 @@ class _WorkspacePageState extends State<WorkspacePage> {
         actions: [
           IconButton(
             tooltip: 'Refresh',
-            onPressed: _refresh,
-            icon: const Icon(Icons.refresh),
+            onPressed: _refreshing ? null : _refresh,
+            icon: _refreshing
+                ? const SizedBox.square(
+                    dimension: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.refresh),
           ),
         ],
       ),
@@ -1396,12 +1512,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
                           title: Text(entry.value),
                           onTap: () {
                             Navigator.pop(context);
-                            setState(() {
-                              _navigationCubit.openSection(entry.key);
-                              _error = null;
-                              _notice = null;
-                              _navigationCubit.refresh();
-                            });
+                            _navigateTo(entry.key);
                           },
                         ),
                       )
@@ -1420,28 +1531,29 @@ class _WorkspacePageState extends State<WorkspacePage> {
       body: RefreshIndicator(
         onRefresh: _refresh,
         child: FutureBuilder<dynamic>(
-          key: ValueKey('$_section-$_revision'),
-          future: _loadSection(),
+          key: ValueKey(_section),
+          future: _sectionFuture,
           builder: (context, snapshot) {
-            if (snapshot.connectionState != ConnectionState.done)
-              return ListView(
-                children: [
-                  SizedBox(
-                    height: 280,
-                    child: Center(child: CircularProgressIndicator()),
-                  ),
-                ],
-              );
-            if (snapshot.hasError)
+            if (snapshot.hasError && !snapshot.hasData)
               return ListView(
                 padding: const EdgeInsets.all(20),
                 children: [
                   _message(_friendly(snapshot.error!), error: true),
-                  FilledButton(
-                    onPressed: _refresh,
-                    child: const Text('Try again'),
+                  FilledButton.icon(
+                    onPressed: _refreshing ? null : _refresh,
+                    icon: _refreshing
+                        ? const SizedBox.square(
+                            dimension: 17,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.refresh_rounded),
+                    label: Text(_refreshing ? 'Refreshing…' : 'Try again'),
                   ),
                 ],
+              );
+            if (!snapshot.hasData)
+              return WorkspaceLoadingState(
+                message: 'Loading ${title.toLowerCase()}',
               );
             return _sectionBody(snapshot.data);
           },
@@ -1454,10 +1566,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
           final destinations = _admin
               ? ['home', 'cards', 'clients', 'funds']
               : ['home', 'cards', 'activity', 'account'];
-          setState(() {
-            _navigationCubit.openSection(destinations[index]);
-            _navigationCubit.refresh();
-          });
+          _navigateTo(destinations[index]);
         },
       ),
     );
@@ -1562,7 +1671,7 @@ class _AssistantConversationPageState extends State<AssistantConversationPage> {
               leading: const CircleAvatar(
                 child: Icon(Icons.credit_card_rounded),
               ),
-              title: Text(_admin ? 'Admin workspace' : 'Z8 Portal'),
+              title: Text(_admin ? 'Admin workspace' : 'Your card account'),
               subtitle: Text(FirebaseAuth.instance.currentUser?.email ?? ''),
             ),
             const Divider(),
@@ -1608,11 +1717,78 @@ class _AssistantConversationPageState extends State<AssistantConversationPage> {
     ),
     body: Column(
       children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+          child: Row(
+            children: [
+              CircleAvatar(
+                backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+                foregroundColor: Theme.of(context).colorScheme.primary,
+                child: const Icon(Icons.support_agent_rounded),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.agent == 'technical_support'
+                          ? 'Z8 technical support'
+                          : _admin
+                          ? 'Z8 card setup assistant'
+                          : 'Your Z8 card assistant',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    Text(
+                      widget.agent == 'technical_support'
+                          ? 'Operational help for your card programme'
+                          : 'Here to help with your cards',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+              if (_sending)
+                const SizedBox.square(
+                  dimension: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+            ],
+          ),
+        ),
         Expanded(
           child: ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              for (final message in _messages)
+              if (_messages.every(
+                (message) => '${message['content'] ?? ''}'.trim().isEmpty,
+              ))
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(18),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _admin
+                              ? 'Ask about card setup or programme operations'
+                              : 'Ask about your Z8 cards',
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          _admin
+                              ? 'Share a client, card nickname or issue and I’ll help you work through it.'
+                              : 'Get help understanding your card, limits or account activity.',
+                          style: Theme.of(context).textTheme.bodyMedium,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              for (final message in _messages.where(
+                (item) => '${item['content'] ?? ''}'.trim().isNotEmpty,
+              ))
                 Align(
                   alignment: message['role'] == 'user'
                       ? Alignment.centerRight
@@ -1623,7 +1799,34 @@ class _AssistantConversationPageState extends State<AssistantConversationPage> {
                         : null,
                     child: Padding(
                       padding: const EdgeInsets.all(12),
-                      child: Text('${message['content'] ?? ''}'),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (message['role'] != 'user') ...[
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.support_agent_rounded,
+                                  size: 17,
+                                  color: Theme.of(context).colorScheme.primary,
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  widget.agent == 'technical_support'
+                                      ? 'Z8 Support'
+                                      : _admin
+                                      ? 'Card assistant'
+                                      : 'Z8 Card Assistant',
+                                  style: Theme.of(context).textTheme.labelLarge,
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 6),
+                          ],
+                          Text('${message['content'] ?? ''}'),
+                        ],
+                      ),
                     ),
                   ),
                 ),

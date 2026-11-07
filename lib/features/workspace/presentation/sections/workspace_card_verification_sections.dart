@@ -30,6 +30,24 @@ extension _WorkspaceCardVerificationSections on _WorkspacePageState {
   }
 
   Future<void> _cardActions(Map<String, dynamic> card) async {
+    final cancelled = '${card['status']}'.toLowerCase() == 'cancelled';
+    var cvvBlocked = card['cvv_blocked'] == true;
+    if (!_admin && !cancelled && '${card['photon_card_id'] ?? ''}'.isNotEmpty) {
+      if (mounted) setState(() => _busyCardId = '${card['id']}');
+      try {
+        final refreshed = await BackendApi.photonPayAction(
+          await _token(),
+          'refresh',
+          payload: {'recordId': card['id']},
+        );
+        cvvBlocked = refreshed['cvv_blocked'] == true;
+      } catch (_) {
+        // Keep card controls available when PhotonPay's status endpoint is offline.
+      } finally {
+        if (mounted) setState(() => _busyCardId = null);
+      }
+    }
+    if (!mounted) return;
     final action = await showModalBottomSheet<String>(
       context: context,
       builder: (context) => SafeArea(
@@ -40,26 +58,37 @@ extension _WorkspaceCardVerificationSections on _WorkspacePageState {
               title: Text(_recordTitle(card)),
               subtitle: Text(_recordSubtitle(card)),
             ),
-            for (final item
-                in (card['status'] == 'frozen' ? ['unfreeze'] : ['freeze']))
-              ListTile(
-                leading: const Icon(Icons.pause_circle_outline),
-                title: Text(item == 'freeze' ? 'Freeze card' : 'Unfreeze card'),
-                onTap: () => Navigator.pop(context, item),
-              ),
-            if (!_admin)
+            if (!cancelled)
+              for (final item
+                  in (card['status'] == 'frozen' ? ['unfreeze'] : ['freeze']))
+                ListTile(
+                  leading: const Icon(Icons.pause_circle_outline),
+                  title: Text(
+                    item == 'freeze' ? 'Freeze card' : 'Unfreeze card',
+                  ),
+                  onTap: () => Navigator.pop(context, item),
+                ),
+            if (!_admin && cvvBlocked)
               ListTile(
                 leading: const Icon(Icons.lock_open),
                 title: const Text('Unblock CVV'),
                 onTap: () => Navigator.pop(context, 'unblock_cvv'),
               ),
-            if (card['card_type'] == 'recharge' && card['status'] == 'active')
+            if (!cancelled &&
+                card['card_type'] == 'recharge' &&
+                card['status'] == 'active')
               ListTile(
                 leading: const Icon(Icons.add_card),
                 title: const Text('Add credit'),
                 onTap: () => Navigator.pop(context, 'top_up'),
               ),
             if (_admin) ...[
+              if ('${card['photon_card_id'] ?? ''}'.isNotEmpty)
+                ListTile(
+                  leading: const Icon(Icons.science_outlined),
+                  title: const Text('Sandbox test transaction'),
+                  onTap: () => Navigator.pop(context, 'sandbox_txn'),
+                ),
               ListTile(
                 leading: const Icon(Icons.edit_outlined),
                 title: const Text('Edit card name'),
@@ -71,11 +100,12 @@ extension _WorkspaceCardVerificationSections on _WorkspacePageState {
                 onTap: () => Navigator.pop(context, 'assign'),
               ),
             ],
-            ListTile(
-              leading: const Icon(Icons.visibility_outlined),
-              title: const Text('View secure card details'),
-              onTap: () => Navigator.pop(context, 'reveal'),
-            ),
+            if (!cancelled)
+              ListTile(
+                leading: const Icon(Icons.visibility_outlined),
+                title: const Text('View secure card details'),
+                onTap: () => Navigator.pop(context, 'reveal'),
+              ),
             ListTile(
               leading: const Icon(Icons.info_outline),
               title: const Text('Refresh card details'),
@@ -86,7 +116,7 @@ extension _WorkspaceCardVerificationSections on _WorkspacePageState {
               title: const Text('View card activity'),
               onTap: () => Navigator.pop(context, 'card_activity'),
             ),
-            if (_admin)
+            if (_admin && !cancelled)
               ListTile(
                 leading: const Icon(Icons.cancel_outlined),
                 title: const Text('Cancel card'),
@@ -96,6 +126,9 @@ extension _WorkspaceCardVerificationSections on _WorkspacePageState {
         ),
       ),
     );
+    if (!mounted || action == null) return;
+    setState(() => _busyCardId = '${card['id']}');
+    try {
     if (action == 'reveal') {
       final isOwner =
           '${card['owner_email'] ?? ''}'.toLowerCase() == _email.toLowerCase();
@@ -120,26 +153,7 @@ extension _WorkspaceCardVerificationSections on _WorkspacePageState {
         if (!mounted) return;
         await showDialog<void>(
           context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('Secure card details'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _detailRow('Card number', detail['card_no']),
-                _detailRow('Expiry', detail['expiry']),
-                _detailRow('CVV', detail['cvv']),
-                if (detail['cvv_unavailable'] == true)
-                  const Text('PhotonPay did not return the CVV.'),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Close'),
-              ),
-            ],
-          ),
+          builder: (context) => SecureCardDetailsDialog(card: detail),
         );
       } catch (error) {
         if (mounted) _updateWorkspace(() => _error = _friendly(error));
@@ -210,6 +224,10 @@ extension _WorkspaceCardVerificationSections on _WorkspacePageState {
       }
       return;
     }
+    if (action == 'sandbox_txn') {
+      await _sandboxTransaction(card);
+      return;
+    }
     if (action == 'cancel') {
       if (!mounted) return;
       final confirmed = await showDialog<bool>(
@@ -233,8 +251,81 @@ extension _WorkspaceCardVerificationSections on _WorkspacePageState {
       );
       if (confirmed != true) return;
     }
-    if (action != null) await _call(action, {'recordId': card['id']});
+    await _call(action, {'recordId': card['id']});
+    } finally {
+      if (mounted) setState(() => _busyCardId = null);
+    }
   }
+
+  Future<void> _sandboxTransaction(Map<String, dynamic> card) => _formDialog(
+    'Sandbox test transaction',
+    const [
+      _FieldSpec(
+        'txnType',
+        'Transaction type',
+        required: true,
+        options: [
+          _FieldOption('auth', 'Payment (auth)'),
+          _FieldOption('void', 'Void a payment'),
+          _FieldOption('refund', 'Refund a payment'),
+        ],
+      ),
+      _FieldSpec(
+        'amount',
+        'Amount',
+        required: true,
+        keyboardType: TextInputType.numberWithOptions(decimal: true),
+      ),
+      _FieldSpec('merchantName', 'Merchant name', required: true),
+      _FieldSpec(
+        'mcc',
+        'Merchant category code',
+        helperText: 'Four digits, for example 5999.',
+      ),
+      _FieldSpec(
+        'originTransactionId',
+        'Original payment ID (void/refund)',
+        helperText: 'Required for void and refund transactions.',
+      ),
+    ],
+    (values) async {
+      final amount = double.tryParse(values['amount'] ?? '');
+      if (amount == null || amount <= 0) {
+        throw Exception('Enter an amount greater than zero.');
+      }
+      final txnType = values['txnType'] ?? '';
+      if (txnType != 'auth' &&
+          (values['originTransactionId'] ?? '').trim().isEmpty) {
+        throw Exception('Enter the original payment ID for a void or refund.');
+      }
+      final result = await BackendApi.photonPayAction(
+        await _token(),
+        'sandbox_txn',
+        payload: {
+          'recordId': card['id'],
+          'txnType': txnType,
+          'amount': amount,
+          'merchantName': values['merchantName'] ?? '',
+          'mcc': values['mcc'] ?? '',
+          'originTransactionId': values['originTransactionId'] ?? '',
+        },
+      );
+      if (result['error'] != null) throw Exception(result['error']);
+      if (mounted) {
+        _updateWorkspace(() {
+          _notice =
+              'Sandbox test transaction sent: ${result['request_id'] ?? 'accepted'}.';
+          _reloadSection();
+        });
+      }
+    },
+    initialValues: const {
+      'txnType': 'auth',
+      'amount': '10',
+      'merchantName': 'Z8 sandbox test',
+      'mcc': '5999',
+    },
+  );
 
   Future<void> _editCard(Map<String, dynamic> card) => _formDialog(
     'Edit card controls',
@@ -265,7 +356,7 @@ extension _WorkspaceCardVerificationSections on _WorkspacePageState {
       if (mounted)
         _updateWorkspace(() {
           _notice = 'Card settings updated.';
-          _navigationCubit.refresh();
+          _reloadSection();
         });
     },
     initialValues: {'nickname': card['nickname']},
@@ -317,27 +408,12 @@ extension _WorkspaceCardVerificationSections on _WorkspacePageState {
       if (mounted)
         _updateWorkspace(() {
           _notice = 'Card top-up submitted.';
-          _navigationCubit.refresh();
+          _reloadSection();
         });
     } catch (error) {
       if (mounted) _updateWorkspace(() => _error = _friendly(error));
     }
   }
-
-  Widget _detailRow(String label, dynamic value) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 6),
-    child: Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Text(label),
-        SelectableText(
-          value?.toString().isNotEmpty == true
-              ? value.toString()
-              : 'Unavailable',
-        ),
-      ],
-    ),
-  );
 
   Widget _verification(Map<String, dynamic> data) {
     final app = data['application'] as Map?;
@@ -353,7 +429,8 @@ extension _WorkspaceCardVerificationSections on _WorkspacePageState {
           'Current status',
           '${identity?['status'] ?? app?['status'] ?? 'Not started'}',
         ),
-        if (app?['review_note'] != null) _message('${app?['review_note']}'),
+        if ('${app?['review_note'] ?? ''}'.trim().isNotEmpty)
+          _message('${app?['review_note']}'),
         if (app?['status'] != 'submitted' &&
             app?['status'] != 'approved' &&
             identity?['status'] != 'verified')
@@ -432,6 +509,9 @@ extension _WorkspaceCardVerificationSections on _WorkspacePageState {
     };
     final key = GlobalKey<FormState>();
     String? photoWarning;
+    var submitting = false;
+    var pickingFront = false;
+    var pickingBack = false;
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
@@ -458,14 +538,27 @@ extension _WorkspaceCardVerificationSections on _WorkspacePageState {
                       spacing: 8,
                       children: [
                         OutlinedButton.icon(
-                          onPressed: () async {
-                            front = await imagePicker.pickImage(
-                              source: ImageSource.gallery,
-                              imageQuality: 80,
-                            );
-                            setDialog(() {});
-                          },
-                          icon: const Icon(Icons.image),
+                          onPressed: submitting || pickingFront || pickingBack
+                              ? null
+                              : () async {
+                                  setDialog(() => pickingFront = true);
+                                  try {
+                                    front = await imagePicker.pickImage(
+                                      source: ImageSource.gallery,
+                                      imageQuality: 80,
+                                    );
+                                  } finally {
+                                    setDialog(() => pickingFront = false);
+                                  }
+                                },
+                          icon: pickingFront
+                              ? const SizedBox.square(
+                                  dimension: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Icon(Icons.image),
                           label: Text(
                             front == null
                                 ? 'Front / passport page'
@@ -474,14 +567,27 @@ extension _WorkspaceCardVerificationSections on _WorkspacePageState {
                         ),
                         if (controllers['certType']?.text != 'passport')
                           OutlinedButton.icon(
-                            onPressed: () async {
-                              back = await imagePicker.pickImage(
-                                source: ImageSource.gallery,
-                                imageQuality: 80,
-                              );
-                              setDialog(() {});
-                            },
-                            icon: const Icon(Icons.image),
+                            onPressed: submitting || pickingFront || pickingBack
+                                ? null
+                                : () async {
+                                    setDialog(() => pickingBack = true);
+                                    try {
+                                      back = await imagePicker.pickImage(
+                                        source: ImageSource.gallery,
+                                        imageQuality: 80,
+                                      );
+                                    } finally {
+                                      setDialog(() => pickingBack = false);
+                                    }
+                                  },
+                            icon: pickingBack
+                                ? const SizedBox.square(
+                                    dimension: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(Icons.image),
                             label: Text(
                               back == null ? 'Back of ID' : 'Back selected',
                             ),
@@ -502,71 +608,103 @@ extension _WorkspaceCardVerificationSections on _WorkspacePageState {
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
+              onPressed: submitting ? null : () => Navigator.pop(dialogContext),
               child: const Text('Cancel'),
             ),
             FilledButton(
-              onPressed: () async {
-                if (!key.currentState!.validate()) return;
-                if (front == null ||
-                    (controllers['certType']!.text != 'passport' &&
-                        back == null)) {
-                  setDialog(
-                    () => photoWarning = 'Choose the required ID photos.',
-                  );
-                  return;
-                }
-                setDialog(() => photoWarning = 'Uploading privately…');
-                try {
-                  final token = await _token();
-                  final frontData = base64Encode(await front!.readAsBytes());
-                  final frontResult = await BackendApi.photonPayAction(
-                    token,
-                    'store_id_photo',
-                    payload: {
-                      'dataBase64': frontData,
-                      'fileName': front!.name,
-                      'mimeType': front!.mimeType ?? 'image/jpeg',
-                    },
-                  );
-                  final backResult = back == null
-                      ? <String, dynamic>{}
-                      : await BackendApi.photonPayAction(
+              onPressed: submitting
+                  ? null
+                  : () async {
+                      if (!key.currentState!.validate()) return;
+                      final mobileDigits = controllers['mobilePrefix']!.text
+                          .replaceAll(RegExp(r'[^0-9]'), '');
+                      if (!RegExp(r'^\d{1,4}$').hasMatch(mobileDigits)) {
+                        setDialog(
+                          () => photoWarning = 'Choose a valid country calling code, such as +971.',
+                        );
+                        return;
+                      }
+                      if (front == null ||
+                          (controllers['certType']!.text != 'passport' &&
+                              back == null)) {
+                        setDialog(
+                          () => photoWarning = 'Choose the required ID photos.',
+                        );
+                        return;
+                      }
+                      setDialog(() {
+                        submitting = true;
+                        photoWarning = 'Uploading privately…';
+                      });
+                      try {
+                        final token = await _token();
+                        final frontData = base64Encode(
+                          await front!.readAsBytes(),
+                        );
+                        final frontResult = await BackendApi.photonPayAction(
                           token,
                           'store_id_photo',
                           payload: {
-                            'dataBase64': base64Encode(
-                              await back!.readAsBytes(),
-                            ),
-                            'fileName': back!.name,
-                            'mimeType': back!.mimeType ?? 'image/jpeg',
+                            'dataBase64': frontData,
+                            'fileName': front!.name,
+                            'mimeType': front!.mimeType ?? 'image/jpeg',
                           },
                         );
-                  selected.addAll({
-                    for (final e in controllers.entries)
-                      e.key: e.value.text.trim(),
-                  });
-                  final result = await BackendApi.photonPayAction(
-                    token,
-                    'submit_registration',
-                    payload: {
-                      ...selected,
-                      'frontPhotoToken': frontResult['photo_token'],
-                      'backPhotoToken': backResult['photo_token'] ?? '',
+                        final backResult = back == null
+                            ? <String, dynamic>{}
+                            : await BackendApi.photonPayAction(
+                                token,
+                                'store_id_photo',
+                                payload: {
+                                  'dataBase64': base64Encode(
+                                    await back!.readAsBytes(),
+                                  ),
+                                  'fileName': back!.name,
+                                  'mimeType': back!.mimeType ?? 'image/jpeg',
+                                },
+                              );
+                        selected.addAll({
+                          for (final e in controllers.entries)
+                            e.key: e.value.text.trim(),
+                        });
+                        selected['mobilePrefix'] = '+$mobileDigits';
+                        final result = await BackendApi.photonPayAction(
+                          token,
+                          'submit_registration',
+                          payload: {
+                            ...selected,
+                            'frontPhotoToken': frontResult['photo_token'],
+                            'backPhotoToken': backResult['photo_token'] ?? '',
+                          },
+                        );
+                        if (result['error'] != null)
+                          throw Exception(result['error']);
+                        if (dialogContext.mounted) Navigator.pop(dialogContext);
+                        if (mounted)
+                          _updateWorkspace(() {
+                            _notice = 'Verification submitted for review.';
+                            _reloadSection();
+                          });
+                      } catch (error) {
+                        setDialog(() {
+                          submitting = false;
+                          photoWarning = _friendly(error);
+                        });
+                      }
                     },
-                  );
-                  if (result['error'] != null) throw Exception(result['error']);
-                  if (dialogContext.mounted) Navigator.pop(dialogContext);
-                  if (mounted)
-                    _updateWorkspace(() {
-                      _notice = 'Verification submitted for review.';
-                      _navigationCubit.refresh();
-                    });
-                } catch (error) {
-                  setDialog(() => photoWarning = _friendly(error));
-                }
-              },
-              child: const Text('Submit'),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (submitting) ...[
+                    const SizedBox.square(
+                      dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                  Text(submitting ? 'Submitting…' : 'Submit'),
+                ],
+              ),
             ),
           ],
         ),

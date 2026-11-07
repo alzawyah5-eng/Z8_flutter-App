@@ -1,16 +1,16 @@
 import 'package:flutter/material.dart';
 
 abstract final class AppTheme {
-  static const plum = Color(0xFF74144F);
-  static const plumDark = Color(0xFF35122E);
+  static const plum = Color(0xFF71164F);
+  static const plumDark = Color(0xFF35152F);
   static const ink = Color(0xFF14263D);
   static const emerald = Color(0xFF167653);
   static const gold = Color(0xFFB88A3B);
   static const muted = Color(0xFF68758A);
-  static const canvas = Color(0xFFF7F6F8);
-  static const border = Color(0xFFE5E2E7);
-  static const fieldFill = Color(0xFFFFFFFF);
-  static const blush = Color(0xFFF7EEF3);
+  static const canvas = Color(0xFFF5F6F8);
+  static const border = Color(0xFFE2E6EC);
+  static const fieldFill = Color(0xFFF9FAFC);
+  static const blush = Color(0xFFF5ECF2);
   static const paleGold = Color(0xFFFBF5E8);
   static const mint = Color(0xFFD9EFDE);
 
@@ -33,7 +33,7 @@ abstract final class AppTheme {
     );
 
     final squareOutline = OutlineInputBorder(
-      borderRadius: BorderRadius.circular(7),
+      borderRadius: BorderRadius.circular(9),
       borderSide: const BorderSide(color: border),
     );
     return ThemeData(
@@ -59,7 +59,7 @@ abstract final class AppTheme {
         elevation: 0,
         margin: const EdgeInsets.symmetric(vertical: 6),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(12),
           side: const BorderSide(color: border),
         ),
       ),
@@ -70,8 +70,9 @@ abstract final class AppTheme {
       dialogTheme: DialogThemeData(
         backgroundColor: Colors.white,
         surfaceTintColor: Colors.transparent,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 24),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(14),
           side: const BorderSide(color: border),
         ),
       ),
@@ -133,15 +134,15 @@ abstract final class AppTheme {
         border: squareOutline,
         enabledBorder: squareOutline,
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(7),
+          borderRadius: BorderRadius.circular(9),
           borderSide: const BorderSide(color: plum, width: 1.5),
         ),
         errorBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(7),
+          borderRadius: BorderRadius.circular(9),
           borderSide: const BorderSide(color: Color(0xFFB42348)),
         ),
         focusedErrorBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(7),
+          borderRadius: BorderRadius.circular(9),
           borderSide: const BorderSide(color: Color(0xFFB42348), width: 1.5),
         ),
       ),
@@ -150,7 +151,7 @@ abstract final class AppTheme {
           backgroundColor: plum,
           foregroundColor: Colors.white,
           minimumSize: const Size.fromHeight(48),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(7)),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
           textStyle: const TextStyle(fontWeight: FontWeight.w800),
         ),
       ),
@@ -159,7 +160,7 @@ abstract final class AppTheme {
           backgroundColor: plum,
           foregroundColor: Colors.white,
           minimumSize: const Size(48, 48),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(7)),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
           textStyle: const TextStyle(fontWeight: FontWeight.w800),
         ),
       ),
@@ -168,7 +169,7 @@ abstract final class AppTheme {
           foregroundColor: ink,
           minimumSize: const Size(48, 48),
           side: const BorderSide(color: border),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(7)),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
           textStyle: const TextStyle(fontWeight: FontWeight.w700),
         ),
       ),

@@ -1,65 +1,117 @@
 part of '../../workspace_page.dart';
 
 extension _WorkspaceClientAdminSections on _WorkspacePageState {
-  Widget _wallet(Map<String, dynamic> data) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      _sectionHeader(
-        'Account funds',
-        'Deposits are added after administrator confirmation.',
-      ),
-      _statRow(
-        'Available',
-        'USD ' + (data['available'] ?? 0).toString(),
-        'On hold',
-        'USD ' + (data['held'] ?? 0).toString(),
-      ),
-      Card(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                '${data['tier_name'] ?? 'No card tier yet'} tier',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              const SizedBox(height: 4),
-              Text('Confirmed deposits: USD ${data['deposited'] ?? 0}'),
-              if (data['next_tier'] is Map) ...[
-                const SizedBox(height: 8),
-                LinearProgressIndicator(
-                  value:
-                      ((num.tryParse('${data['deposited']}') ?? 0) /
-                              ((num.tryParse(
-                                    '${(data['next_tier'] as Map)['from']}',
-                                  ) ??
-                                  1)))
-                          .clamp(0.0, 1.0)
-                          .toDouble(),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'USD ${(data['next_tier'] as Map)['remaining']} more to ${(data['next_tier'] as Map)['name']}',
-                ),
-              ],
-            ],
-          ),
+  Widget _wallet(Map<String, dynamic> data) {
+    final wallet = Map<String, dynamic>.from(
+      data['wallet'] as Map? ?? const {},
+    );
+    final registration = Map<String, dynamic>.from(
+      data['registration'] as Map? ?? const {},
+    );
+    final requestState = Map<String, dynamic>.from(
+      registration['card_request'] as Map? ?? const {},
+    );
+    final verified = requestState['verified'] == true;
+    final ladder = (wallet['ladder'] as List? ?? const [])
+        .whereType<Map>()
+        .map((step) => Map<String, dynamic>.from(step))
+        .toList();
+    final nextTier = wallet['next_tier'] is Map
+        ? Map<String, dynamic>.from(wallet['next_tier'] as Map)
+        : null;
+    final deposited = double.tryParse('${wallet['deposited'] ?? 0}') ?? 0;
+    final currentTier = '${wallet['tier'] ?? ''}';
+    final currentFloor =
+        ladder
+            .where((step) => '${step['id']}' == currentTier)
+            .map((step) => double.tryParse('${step['from']}') ?? 0)
+            .firstOrNull ??
+        0;
+    final nextFloor = double.tryParse('${nextTier?['from'] ?? 0}') ?? 0;
+    final progress = nextTier == null
+        ? 1.0
+        : ((deposited - currentFloor) / (nextFloor - currentFloor))
+              .clamp(0.0, 1.0)
+              .toDouble();
+    final applicationStatus = '${registration['application']?['status'] ?? ''}';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _sectionHeader(
+          'Your account',
+          'Money you deposited with us. New cards and top-ups are paid from it.',
         ),
-      ),
-      if ('${data['funding_instructions'] ?? ''}'.isNotEmpty)
-        _message('${data['funding_instructions']}'),
-      _actionButton('Report a deposit', Icons.add, _reportDeposit),
-      _recordList(
-        'Account activity',
-        data['entries'],
-        onTap: (entry) async {
-          if (entry['has_proof'] == true)
-            await _viewDepositProof('${entry['id']}', admin: false);
-        },
-      ),
-    ],
-  );
+        if (!verified) ...[
+          _message(
+            'Verify your identity first. After approval, you can add funds and request cards.',
+          ),
+          if (applicationStatus != 'submitted' &&
+              applicationStatus != 'approved')
+            _actionButton(
+              applicationStatus == 'rejected'
+                  ? 'Review my details'
+                  : 'Verify now',
+              Icons.verified_user_outlined,
+              () => _navigateTo('verification'),
+            ),
+        ] else ...[
+          _statRow(
+            'Balance',
+            'USD ${wallet['balance'] ?? 0}',
+            'Set aside',
+            'USD ${wallet['held'] ?? 0}',
+          ),
+          _statusCard('Available', 'USD ${wallet['available'] ?? 0}'),
+          if ((double.tryParse('${wallet['held'] ?? 0}') ?? 0) > 0)
+            const Padding(
+              padding: EdgeInsets.only(bottom: 8),
+              child: Text(
+                'Set aside: reserved for your card request until it is approved.',
+                style: TextStyle(color: Color(0xFF68758A), fontSize: 12),
+              ),
+            ),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '${wallet['tier_name'] ?? 'No card tier yet'} tier',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'You have deposited USD ${wallet['deposited'] ?? 0} in total.',
+                  ),
+                  const SizedBox(height: 8),
+                  LinearProgressIndicator(value: progress),
+                  const SizedBox(height: 4),
+                  Text(
+                    nextTier == null
+                        ? 'You have reached the highest available tier.'
+                        : 'Deposit USD ${nextTier['remaining']} more to unlock ${nextTier['name']}.',
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if ('${wallet['funding_instructions'] ?? ''}'.isNotEmpty)
+            _message('${wallet['funding_instructions']}'),
+          _actionButton('Add funds', Icons.add, _reportDeposit),
+          _recordList(
+            'Movements',
+            wallet['entries'],
+            onTap: (entry) async {
+              if (entry['has_proof'] == true)
+                await _viewDepositProof('${entry['id']}', admin: false);
+            },
+          ),
+        ],
+      ],
+    );
+  }
 
   Widget _clients(Map<String, dynamic> data) {
     final applications = data['applications'] as List? ?? [];
@@ -179,20 +231,21 @@ extension _WorkspaceClientAdminSections on _WorkspacePageState {
                                 });
                             }
                           },
-                          itemBuilder: (_) => const [
-                            PopupMenuItem(
+                          itemBuilder: (_) => [
+                            const PopupMenuItem(
                               value: 'front',
                               child: Text('View front / passport photo'),
                             ),
-                            PopupMenuItem(
-                              value: 'back',
-                              child: Text('View back photo'),
-                            ),
-                            PopupMenuItem(
+                            if ('${raw['back_file_uri'] ?? ''}'.isNotEmpty)
+                              const PopupMenuItem(
+                                value: 'back',
+                                child: Text('View back photo'),
+                              ),
+                            const PopupMenuItem(
                               value: 'approve',
                               child: Text('Approve & send'),
                             ),
-                            PopupMenuItem(
+                            const PopupMenuItem(
                               value: 'reject',
                               child: Text('Reject'),
                             ),
@@ -235,16 +288,164 @@ extension _WorkspaceClientAdminSections on _WorkspacePageState {
     List<Map<String, dynamic>> cards,
   ) {
     var query = '';
+    var statusFilter = 'all';
+    var reviewFilter = 'all';
+    var actionOnly = false;
+    DateTime? createdFrom;
+    DateTime? createdTo;
     return StatefulBuilder(
       builder: (context, setLocal) {
-        final shown = holders
-            .where(
-              (holder) =>
-                  '${holder['full_name'] ?? ''} ${holder['email'] ?? ''} ${holder['review_status'] ?? ''}'
-                      .toLowerCase()
-                      .contains(query),
-            )
-            .toList();
+        final shown =
+            holders.where((holder) {
+              final providerStatus = '${holder['provider_status'] ?? ''}'
+                  .toLowerCase();
+              final reviewStatus = '${holder['review_status'] ?? ''}'
+                  .toLowerCase();
+              final needsAction =
+                  const [
+                    'modify',
+                    'cert_required',
+                    'rejected',
+                  ].contains(reviewStatus) ||
+                  const ['failed', 'disabled'].contains(providerStatus);
+              final date = DateTime.tryParse(
+                '${holder['photon_created_at'] ?? holder['created_date'] ?? ''}',
+              );
+              if (statusFilter != 'all' && providerStatus != statusFilter)
+                return false;
+              if (reviewFilter != 'all' && reviewStatus != reviewFilter)
+                return false;
+              if (actionOnly && !needsAction) return false;
+              if (createdFrom != null &&
+                  date != null &&
+                  date.isBefore(
+                    DateTime(
+                      createdFrom!.year,
+                      createdFrom!.month,
+                      createdFrom!.day,
+                    ),
+                  ))
+                return false;
+              if (createdTo != null &&
+                  date != null &&
+                  date.isAfter(
+                    DateTime(
+                      createdTo!.year,
+                      createdTo!.month,
+                      createdTo!.day,
+                      23,
+                      59,
+                      59,
+                    ),
+                  ))
+                return false;
+              return '${holder['photon_cardholder_id'] ?? ''} ${holder['full_name'] ?? ''} ${holder['email'] ?? ''} ${holder['owner_email'] ?? ''} ${holder['phone'] ?? ''} ${holder['nationality'] ?? ''}'
+                  .toLowerCase()
+                  .contains(query);
+            }).toList()..sort(
+              (a, b) => '${b['photon_created_at'] ?? b['created_date'] ?? ''}'
+                  .compareTo(
+                    '${a['photon_created_at'] ?? a['created_date'] ?? ''}',
+                  ),
+            );
+        Future<void> chooseDate(bool from) async {
+          final selected = await showDatePicker(
+            context: context,
+            initialDate: (from ? createdFrom : createdTo) ?? DateTime.now(),
+            firstDate: DateTime(2000),
+            lastDate: DateTime.now().add(const Duration(days: 1)),
+          );
+          if (selected != null)
+            setLocal(() {
+              if (from) {
+                createdFrom = selected;
+              } else {
+                createdTo = selected;
+              }
+            });
+        }
+
+        Future<void> showCsv() async {
+          String cell(dynamic value) => '"${'$value'.replaceAll('"', '""')}"';
+          final rows = <List<dynamic>>[
+            const [
+              'Card user ID',
+              'First name',
+              'Last name',
+              'Email',
+              'Mobile',
+              'Nationality',
+              'Status',
+              'Review status',
+              'Reason',
+              'Created',
+              'Z8 account',
+              'Cards',
+            ],
+            for (final holder in shown)
+              [
+                holder['photon_cardholder_id'],
+                holder['first_name'],
+                holder['last_name'],
+                holder['email'],
+                holder['phone'],
+                holder['nationality'],
+                holder['provider_status'],
+                holder['review_status'],
+                holder['review_reason'],
+                holder['photon_created_at'],
+                holder['owner_email'],
+                cards
+                    .where(
+                      (card) =>
+                          '${card['cardholder_id'] ?? ''}' ==
+                              '${holder['id']}' ||
+                          ('${holder['photon_cardholder_id'] ?? ''}'
+                                  .isNotEmpty &&
+                              '${card['photon_cardholder_id'] ?? ''}' ==
+                                  '${holder['photon_cardholder_id']}'),
+                    )
+                    .length,
+              ],
+          ];
+          final csv = rows.map((row) => row.map(cell).join(',')).join('\n');
+          await showDialog<void>(
+            context: context,
+            builder: (dialogContext) => AlertDialog(
+              title: const Text('Export card users'),
+              content: SizedBox(
+                width: 520,
+                child: SingleChildScrollView(child: SelectableText(csv)),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('Close'),
+                ),
+                FilledButton.icon(
+                  onPressed: () async {
+                    await Clipboard.setData(ClipboardData(text: csv));
+                    if (dialogContext.mounted) Navigator.pop(dialogContext);
+                    if (mounted)
+                      _updateWorkspace(
+                        () => _notice = 'Filtered cardholder CSV copied. Paste it into a spreadsheet to save it.',
+                      );
+                  },
+                  icon: const Icon(Icons.copy_rounded),
+                  label: const Text('Copy CSV'),
+                ),
+              ],
+            ),
+          );
+        }
+
+        final filtersActive =
+            query.isNotEmpty ||
+            statusFilter != 'all' ||
+            reviewFilter != 'all' ||
+            actionOnly ||
+            createdFrom != null ||
+            createdTo != null;
         return Card(
           child: Column(
             children: [
@@ -258,6 +459,116 @@ extension _WorkspaceClientAdminSections on _WorkspacePageState {
                   ),
                   onChanged: (value) =>
                       setLocal(() => query = value.trim().toLowerCase()),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    DropdownButton<String>(
+                      value: statusFilter,
+                      items: const [
+                        DropdownMenuItem(
+                          value: 'all',
+                          child: Text('All statuses'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'normal',
+                          child: Text('Normal'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'pending',
+                          child: Text('Under review'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'disabled',
+                          child: Text('Disabled'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'failed',
+                          child: Text('Failed'),
+                        ),
+                      ],
+                      onChanged: (value) =>
+                          setLocal(() => statusFilter = value ?? 'all'),
+                    ),
+                    DropdownButton<String>(
+                      value: reviewFilter,
+                      items: const [
+                        DropdownMenuItem(
+                          value: 'all',
+                          child: Text('All review statuses'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'pending',
+                          child: Text('Under review'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'modify',
+                          child: Text('Pending modification'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'approved',
+                          child: Text('Approved'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'rejected',
+                          child: Text('Rejected'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'cert_required',
+                          child: Text('Identity required'),
+                        ),
+                      ],
+                      onChanged: (value) =>
+                          setLocal(() => reviewFilter = value ?? 'all'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: () => chooseDate(true),
+                      icon: const Icon(Icons.calendar_today_outlined, size: 16),
+                      label: Text(
+                        createdFrom == null
+                            ? 'Created from'
+                            : '${createdFrom!.year}-${createdFrom!.month.toString().padLeft(2, '0')}-${createdFrom!.day.toString().padLeft(2, '0')}',
+                      ),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: () => chooseDate(false),
+                      icon: const Icon(Icons.event_outlined, size: 16),
+                      label: Text(
+                        createdTo == null
+                            ? 'Created to'
+                            : '${createdTo!.year}-${createdTo!.month.toString().padLeft(2, '0')}-${createdTo!.day.toString().padLeft(2, '0')}',
+                      ),
+                    ),
+                    FilterChip(
+                      label: Text(
+                        'Needs action · ${holders.where((holder) => const ['modify', 'cert_required', 'rejected'].contains('${holder['review_status']}') || const ['failed', 'disabled'].contains('${holder['provider_status']}')).length}',
+                      ),
+                      selected: actionOnly,
+                      onSelected: (value) => setLocal(() => actionOnly = value),
+                    ),
+                    if (filtersActive)
+                      TextButton(
+                        onPressed: () => setLocal(() {
+                          query = '';
+                          statusFilter = 'all';
+                          reviewFilter = 'all';
+                          actionOnly = false;
+                          createdFrom = null;
+                          createdTo = null;
+                        }),
+                        child: const Text('Clear filters'),
+                      ),
+                    OutlinedButton.icon(
+                      onPressed: shown.isEmpty ? null : showCsv,
+                      icon: const Icon(Icons.download_outlined, size: 16),
+                      label: const Text('Export CSV'),
+                    ),
+                    Text('${shown.length} of ${holders.length} card users'),
+                  ],
                 ),
               ),
               if (shown.isEmpty)
@@ -333,7 +644,7 @@ extension _WorkspaceClientAdminSections on _WorkspacePageState {
       if (mounted)
         _updateWorkspace(() {
           _notice = 'Cardholder updated at PhotonPay.';
-          _navigationCubit.refresh();
+          _reloadSection();
         });
     },
     initialValues: {
@@ -432,7 +743,18 @@ extension _WorkspaceClientAdminSections on _WorkspacePageState {
                 children: [
                   const ListTile(title: Text('Deposits awaiting review')),
                   if (pending.isEmpty)
-                    const ListTile(title: Text('No pending deposits.')),
+                    const Padding(
+                      padding: EdgeInsets.fromLTRB(16, 0, 16, 16),
+                      child: Row(
+                        children: [
+                          Icon(Icons.check_circle_outline_rounded, size: 18),
+                          SizedBox(width: 8),
+                          Expanded(
+                            child: Text('No deposits need review right now.'),
+                          ),
+                        ],
+                      ),
+                    ),
                   for (final raw in pending)
                     if (raw is Map)
                       ListTile(
@@ -514,7 +836,7 @@ extension _WorkspaceClientAdminSections on _WorkspacePageState {
               onChanged: (value) => setLocal(() => search = value.trim()),
             ),
             _recordList(
-              'Client balances · ${filteredClients.length}',
+              'Client balances',
               filteredClients,
               onTap: _openClientLedger,
             ),
@@ -591,7 +913,18 @@ extension _WorkspaceClientAdminSections on _WorkspacePageState {
                             '${entry['kind'] ?? 'Movement'} · USD ${entry['amount'] ?? 0}',
                           ),
                           subtitle: Text(
-                            '${entry['status'] ?? ''} · ${entry['date'] ?? ''} · ${entry['note'] ?? ''}',
+                            [
+                                  entry['status'],
+                                  formatZ8DateTime(entry['date']) == '—'
+                                      ? null
+                                      : formatZ8DateTime(entry['date']),
+                                  entry['note'],
+                                ]
+                                .where(
+                                  (value) =>
+                                      value != null && '$value'.isNotEmpty,
+                                )
+                                .join(' · '),
                           ),
                           trailing: entry['has_proof'] == true
                               ? IconButton(
@@ -668,7 +1001,7 @@ extension _WorkspaceClientAdminSections on _WorkspacePageState {
       if (mounted)
         _updateWorkspace(() {
           _notice = 'Client balance correction saved.';
-          _navigationCubit.refresh();
+          _reloadSection();
         });
     },
   );
@@ -742,7 +1075,7 @@ extension _WorkspaceClientAdminSections on _WorkspacePageState {
           Icons.account_balance,
           () async {
             await _call('balance');
-            if (mounted) _updateWorkspace(() => _navigationCubit.refresh());
+            if (mounted) _updateWorkspace(() => _reloadSection());
           },
         ),
         _actionButton(
@@ -752,14 +1085,14 @@ extension _WorkspaceClientAdminSections on _WorkspacePageState {
         ),
         _actionButton('Re-test connection', Icons.refresh, () async {
           await _call('status');
-          _updateWorkspace(() => _navigationCubit.refresh());
+          _updateWorkspace(() => _reloadSection());
         }),
         _actionButton(
           'Run full diagnostic check',
           Icons.health_and_safety_outlined,
           () => _updateWorkspace(() {
             _notice = 'Diagnostics refreshed';
-            _navigationCubit.refresh();
+            _reloadSection();
           }),
         ),
         Card(
@@ -915,7 +1248,7 @@ extension _WorkspaceClientAdminSections on _WorkspacePageState {
       if (mounted)
         _updateWorkspace(() {
           _notice = 'Programme defaults saved.';
-          _navigationCubit.refresh();
+          _reloadSection();
         });
     },
     initialValues: {

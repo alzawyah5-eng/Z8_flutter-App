@@ -27,20 +27,24 @@ extension _WorkspaceAccountSections on _WorkspacePageState {
                 onLogout: _confirmLogout,
                 onNavigate: (section) {
                   Navigator.pop(context);
-                  _updateWorkspace(() {
-                    _navigationCubit.openSection(section);
-                    _navigationCubit.refresh();
-                  });
+                  _navigateTo(section);
                 },
               ),
             ),
           );
-        if (mounted) _updateWorkspace(() => _navigationCubit.refresh());
+        if (mounted) _updateWorkspace(() => _reloadSection());
       }),
-      for (final item in conversations)
+      for (final item in conversations.where(
+        (conversation) => (conversation['messages'] as List? ?? []).any(
+          (message) =>
+              message is Map && '${message['content'] ?? ''}'.trim().isNotEmpty,
+        ),
+      ))
         Card(
           child: ListTile(
-            title: Text('${item['metadata']?['name'] ?? 'Conversation'}'),
+            title: Text(
+              '${item['metadata']?['title'] ?? item['metadata']?['name'] ?? (agent == 'technical_support' ? 'Support conversation' : 'Card assistant conversation')}',
+            ),
             subtitle: Text(
               '${(item['messages'] as List? ?? []).length} messages',
             ),
@@ -56,15 +60,12 @@ extension _WorkspaceAccountSections on _WorkspacePageState {
                     onLogout: _confirmLogout,
                     onNavigate: (section) {
                       Navigator.pop(context);
-                      _updateWorkspace(() {
-                        _navigationCubit.openSection(section);
-                        _navigationCubit.refresh();
-                      });
+                      _navigateTo(section);
                     },
                   ),
                 ),
               );
-              if (mounted) _updateWorkspace(() => _navigationCubit.refresh());
+              if (mounted) _updateWorkspace(() => _reloadSection());
             },
           ),
         ),
@@ -102,7 +103,14 @@ extension _WorkspaceAccountSections on _WorkspacePageState {
       _sectionHeader('Account', 'Profile and security settings.'),
       _statusCard('Signed in as', _email),
       _statusCard('Role', _admin ? 'Administrator' : 'User'),
-      const PushTestCard(),
+      const Card(
+        child: Padding(
+          padding: EdgeInsets.all(12),
+          child: Text(
+            'Account closure disables sign-in and keeps financial activity for programme audit. A minimal email record is retained to prevent recreating the closed account.',
+          ),
+        ),
+      ),
       _actionButton('Sign out', Icons.logout, _confirmLogout),
       _actionButton(
         'Permanently delete account',

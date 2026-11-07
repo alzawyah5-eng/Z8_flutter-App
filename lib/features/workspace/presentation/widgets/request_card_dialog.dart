@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+enum RequestCardDialogResult { requested, addFunds }
+
 /// Request-card flow kept separate from the workspace layout and reusable
 /// wherever a verified client can start a card request.
 class RequestCardDialog extends StatefulWidget {
@@ -145,22 +147,49 @@ class _RequestCardDialogState extends State<RequestCardDialog> {
             ? Text(
                 'USD ${double.parse(_amount.text).toStringAsFixed(2)} has been reserved from your available balance. Your request is ready for administrator review.',
               )
+            : !canRequest && state['needs_funds'] == true
+            ? _fundingNeededContent(state)
             : !canRequest
             ? Text(
                 '${state['reason'] ?? 'Card requests are not available right now.'}',
               )
             : _formContents(),
       ),
-      actions: _complete || !canRequest
+      actions: _complete
           ? [
               FilledButton(
-                onPressed: () => Navigator.pop(context, _complete),
-                child: Text(_complete ? 'Done' : 'Close'),
+                onPressed: () => Navigator.pop(
+                  context,
+                  RequestCardDialogResult.requested,
+                ),
+                child: const Text('Done'),
+              ),
+            ]
+          : !canRequest && state['needs_funds'] == true
+          ? [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Not now'),
+              ),
+              FilledButton.icon(
+                onPressed: () => Navigator.pop(
+                  context,
+                  RequestCardDialogResult.addFunds,
+                ),
+                icon: const Icon(Icons.savings_rounded),
+                label: const Text('Add funds'),
+              ),
+            ]
+          : !canRequest
+          ? [
+              FilledButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Close'),
               ),
             ]
           : [
               TextButton(
-                onPressed: _busy ? null : () => Navigator.pop(context, false),
+                onPressed: _busy ? null : () => Navigator.pop(context),
                 child: const Text('Cancel'),
               ),
               FilledButton.icon(
@@ -174,6 +203,32 @@ class _RequestCardDialogState extends State<RequestCardDialog> {
                 label: Text(_busy ? 'Sending…' : 'Send request'),
               ),
             ],
+    );
+  }
+
+  Widget _fundingNeededContent(Map<String, dynamic> state) {
+    final ladder = state['ladder'] as List? ?? const [];
+    final tier = '${state['tier'] ?? ''}';
+    final first = ladder.whereType<Map>().firstOrNull;
+    final firstName = '${first?['name'] ?? first?['id'] ?? 'first card'}';
+    final firstAmount = double.tryParse('${first?['from']}') ?? _minimum;
+    final deposited = double.tryParse('${state['deposited']}') ?? 0;
+    final message = tier.isEmpty && first != null
+        ? 'Your first card, $firstName, is available once you have deposited USD ${firstAmount.toStringAsFixed(2)} in total. You have deposited USD ${deposited.toStringAsFixed(2)} so far.'
+        : 'A new card needs at least USD ${_minimum.toStringAsFixed(2)} available in your account. Your available balance is USD ${_available.toStringAsFixed(2)}.';
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Icon(Icons.account_balance_wallet_outlined, size: 28),
+        const SizedBox(height: 12),
+        const Text(
+          'Add funds first',
+          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 8),
+        Text(message),
+      ],
     );
   }
 

@@ -22,10 +22,18 @@ class NotificationService {
   NotificationService._();
 
   static final FirebaseMessaging _messaging = FirebaseMessaging.instance;
-  static const MethodChannel _notificationChannel =
-      MethodChannel('com.nakhba.z8_portal/notifications');
+  static const MethodChannel _notificationChannel = MethodChannel(
+    'com.nakhba.z8_portal/notifications',
+  );
   static String? _registeredToken;
+  static String? _pendingSection;
   static bool _initialized = false;
+
+  static String? takePendingSection() {
+    final section = _pendingSection;
+    _pendingSection = null;
+    return section;
+  }
 
   static Future<void> initialize() async {
     if (_initialized || kIsWeb) return;
@@ -88,59 +96,6 @@ class NotificationService {
     _registeredToken = null;
   }
 
-  static Future<Map<String, dynamic>> sendTestPush() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) {
-      throw const BackendApiException('not-signed-in', 'Sign in before testing notifications.');
-    }
-    await _registerCurrentDeviceForTest(user);
-    final idToken = await user.getIdToken();
-    if (idToken == null) {
-      throw const BackendApiException('missing-id-token', 'The signed-in session needs to be refreshed.');
-    }
-    return BackendApi.sendNotificationTest(idToken);
-  }
-
-  static Future<void> _registerCurrentDeviceForTest(User user) async {
-    final settings = await _messaging.requestPermission(
-      alert: true,
-      badge: true,
-      sound: true,
-      provisional: false,
-    );
-    if (settings.authorizationStatus != AuthorizationStatus.authorized &&
-        settings.authorizationStatus != AuthorizationStatus.provisional) {
-      throw const BackendApiException(
-        'notifications-permission-denied',
-        'Enable notifications for Z8 Portal in Android settings, then try again.',
-      );
-    }
-
-    if (defaultTargetPlatform == TargetPlatform.iOS &&
-        await _messaging.getAPNSToken() == null) {
-      throw const BackendApiException(
-        'notifications-not-ready',
-        'Apple Push Notifications are not ready on this device. Try again shortly.',
-      );
-    }
-
-    // ignore: deprecated_member_use
-    final token = await _messaging.getToken();
-    if (token == null || token.isEmpty) {
-      throw const BackendApiException(
-        'notifications-token-unavailable',
-        'This phone has not received a push token yet. Check its internet connection and try again.',
-      );
-    }
-    final idToken = await user.getIdToken();
-    if (idToken == null) {
-      throw const BackendApiException('missing-id-token', 'The signed-in session needs to be refreshed.');
-    }
-    final platform = defaultTargetPlatform == TargetPlatform.iOS ? 'ios' : 'android';
-    await BackendApi.registerDevice(idToken, token, platform);
-    _registeredToken = token;
-  }
-
   static Future<void> _registerToken(String token) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
@@ -152,8 +107,9 @@ class NotificationService {
       }
       final idToken = await user.getIdToken();
       if (idToken == null) return;
-      final platform =
-          defaultTargetPlatform == TargetPlatform.iOS ? 'ios' : 'android';
+      final platform = defaultTargetPlatform == TargetPlatform.iOS
+          ? 'ios'
+          : 'android';
       await BackendApi.registerDevice(idToken, token, platform);
       _registeredToken = token;
     } catch (_) {
@@ -163,26 +119,38 @@ class NotificationService {
 
   static void _showForeground(RemoteMessage message) {
     final notification = message.notification;
-    if (notification != null && defaultTargetPlatform == TargetPlatform.android) {
-      unawaited(_showAndroidNotification(
-        notification.title ?? 'Z8',
-        notification.body ?? 'You have a new update.',
-      ));
+    if (notification != null &&
+        defaultTargetPlatform == TargetPlatform.android) {
+      unawaited(
+        _showAndroidNotification(
+          notification.title ?? 'Z8',
+          notification.body ?? 'You have a new update.',
+        ),
+      );
     }
     final context = notificationNavigatorKey.currentContext;
     if (notification == null || context == null) return;
     ScaffoldMessenger.maybeOf(context)
       ?..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(
-        content: Text(
-          '${notification.title ?? 'Z8'}: '
-          '${notification.body ?? 'You have a new update.'}',
+      ..showSnackBar(
+        SnackBar(
+          content: Text(
+            '${notification.title ?? 'Z8'}: '
+            '${notification.body ?? 'You have a new update.'}',
+          ),
+          behavior: SnackBarBehavior.floating,
+          action: SnackBarAction(
+            label: 'View',
+            onPressed: () => _openLink(message.data['link']?.toString()),
+          ),
         ),
-        behavior: SnackBarBehavior.floating,
-      ));
+      );
   }
 
-  static Future<void> _showAndroidNotification(String title, String body) async {
+  static Future<void> _showAndroidNotification(
+    String title,
+    String body,
+  ) async {
     try {
       await _notificationChannel.invokeMethod<void>('showNotification', {
         'title': title,
@@ -200,9 +168,36 @@ class NotificationService {
   }
 
   static void _openMessage(RemoteMessage message) {
-    final navigator = notificationNavigatorKey.currentState;
-    if (navigator == null) return;
+    _openLink(message.data['link']?.toString());
+  }
+
+  static void _openLink(String? link) {
     final signedIn = FirebaseAuth.instance.currentUser != null;
-    navigator.pushNamed(signedIn ? '/signed-in' : '/login');
+    if (!signedIn) {
+      notificationNavigatorKey.currentState?.pushNamed('/login');
+      return;
+    }
+    final path = Uri.tryParse(link ?? '')?.path ?? link ?? '';
+    final section = switch (path) {
+      final value when value.startsWith('/cards') => 'cards',
+      final value when value.startsWith('/activity') => 'activity',
+      final value when value.startsWith('/verification') => 'verification',
+      final value when value.startsWith('/account') => 'wallet',
+      final value when value.startsWith('/admin/funds') => 'funds',
+      final value when value.startsWith('/cardholders') => 'clients',
+      final value
+          when value.startsWith('/admin/connections') ||
+              value.startsWith('/settings') =>
+        'connection',
+      final value when value.startsWith('/admin/support') => 'support',
+      final value when value.startsWith('/assistant') => 'assistant',
+      _ => 'notifications',
+    };
+    final navigator = notificationNavigatorKey.currentState;
+    if (navigator == null) {
+      _pendingSection = section;
+      return;
+    }
+    navigator.pushNamed('/workspace', arguments: section);
   }
 }

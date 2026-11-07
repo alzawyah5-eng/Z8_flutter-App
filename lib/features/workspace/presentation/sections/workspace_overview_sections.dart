@@ -13,8 +13,114 @@ extension _WorkspaceOverviewSections on _WorkspacePageState {
       'cards' => 1,
       'activity' => 2,
       'account' => 3,
+      'verification' => -1,
       _ => 0,
     };
+  }
+
+  Widget _clientCardRequestControls(
+    Map<String, dynamic> registration, {
+    Map<String, dynamic> wallet = const {},
+  }) {
+    final state = Map<String, dynamic>.from(
+      registration['card_request'] as Map? ?? const {},
+    );
+    final application = Map<String, dynamic>.from(
+      registration['application'] as Map? ?? const {},
+    );
+    final latest = Map<String, dynamic>.from(
+      registration['latest_card_request'] as Map? ?? const {},
+    );
+
+    if (state['verified'] != true) {
+      final status = '${application['status'] ?? ''}';
+      if (status == 'submitted' || status == 'approved') {
+        return const SizedBox.shrink();
+      }
+      return _actionButton(
+        status == 'rejected' ? 'Review my details' : 'Verify now',
+        Icons.verified_user_outlined,
+        () => _navigateTo('verification'),
+      );
+    }
+
+    if (state['waiting_approval'] == true && latest['status'] == 'pending') {
+      return Card(
+        child: ListTile(
+          leading: const Icon(Icons.schedule_rounded),
+          title: const Text('Card request awaiting approval'),
+          subtitle: Text(
+            'USD ${latest['amount'] ?? 0} is reserved while your request is reviewed.',
+          ),
+          trailing: TextButton(
+            onPressed: _busyAction != null
+                ? null
+                : () => _call('cancel_card_request', {
+                    'requestId': '${latest['id']}',
+                  }),
+            child: _busyAction == 'cancel_card_request'
+                ? const SizedBox.square(
+                    dimension: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Text('Cancel'),
+          ),
+        ),
+      );
+    }
+
+    final reason = '${state['reason'] ?? ''}';
+    if (reason.toLowerCase().contains('being created')) {
+      return Card(
+        child: ListTile(
+          leading: const Icon(Icons.hourglass_top_rounded),
+          title: const Text('Your card is being created'),
+          subtitle: Text(reason),
+        ),
+      );
+    }
+
+    if (state['can_request'] == true || state['needs_funds'] == true) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (latest['status'] == 'rejected')
+            _message(
+              "Your last card request wasn't approved${'${latest['review_note'] ?? ''}'.isNotEmpty ? ': ${latest['review_note']}' : '.'}",
+              error: true,
+            ),
+          _actionButton(
+            'Request a card',
+            Icons.add_card_rounded,
+            () => _requestCard(registration),
+          ),
+        ],
+      );
+    }
+
+    final pendingDeposits = (wallet['entries'] as List? ?? const [])
+        .whereType<Map>()
+        .where(
+          (entry) => entry['kind'] == 'deposit' && entry['status'] == 'pending',
+        )
+        .length;
+    if (latest['status'] == 'rejected' || pendingDeposits > 0) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (latest['status'] == 'rejected')
+            _message(
+              "Your last card request wasn't approved${'${latest['review_note'] ?? ''}'.isNotEmpty ? ': ${latest['review_note']}' : '.'}",
+              error: true,
+            ),
+          if (pendingDeposits > 0)
+            _message(
+              '$pendingDeposits deposit${pendingDeposits == 1 ? '' : 's'} waiting for confirmation.',
+            ),
+        ],
+      );
+    }
+    return const SizedBox.shrink();
   }
 
   IconData _icon(String key) => switch (key) {
@@ -34,6 +140,27 @@ extension _WorkspaceOverviewSections on _WorkspacePageState {
     final children = <Widget>[const SizedBox(height: 12)];
     if (_notice != null) children.add(_message(_notice!));
     if (_error != null) children.add(_message(_error!, error: true));
+    if (_standaloneActionBusy)
+      children.add(
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+            child: Row(
+              children: [
+                const SizedBox.square(
+                  dimension: 17,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  'Processing your action…',
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
     switch (_section) {
       case 'home':
         final map = Map<String, dynamic>.from(data as Map);
@@ -100,15 +227,13 @@ extension _WorkspaceOverviewSections on _WorkspacePageState {
             ),
           );
           children.add(
-            _actionButton(
-              'Request a card',
-              Icons.add_card_rounded,
-              () => _requestCard(verification),
-            ),
+            _clientCardRequestControls(verification, wallet: wallet),
           );
-          children.add(
-            _actionButton('Report a deposit', Icons.add, _reportDeposit),
-          );
+          if ((verification['card_request'] as Map?)?['verified'] == true) {
+            children.add(
+              _actionButton('Report a deposit', Icons.add, _reportDeposit),
+            );
+          }
         }
         children.add(_recordList('Recent transactions', map['transactions']));
         children.add(_cardGrid(_items(map['cards'])));
@@ -139,10 +264,11 @@ extension _WorkspaceOverviewSections on _WorkspacePageState {
         children.add(
           _sectionHeader(
             'Notifications',
-            'Updates about your verification, funds and cards.',
+            _admin
+                ? 'Client verification, card requests, deposits and account activity.'
+                : 'Updates about your verification, funds and cards.',
           ),
         );
-        children.add(const PushTestCard());
         final notificationItems = _items(data);
         if (notificationItems.any((item) => item['read'] != true)) {
           children.add(
@@ -193,7 +319,7 @@ extension _WorkspaceOverviewSections on _WorkspacePageState {
             ),
             title: Text('${item['title'] ?? 'Z8 update'}'),
             subtitle: Text(
-              '${item['body'] ?? ''}\n${item['created_date'] ?? ''}',
+              '${item['body'] ?? ''}\n${formatZ8DateTime(item['created_date'])}',
             ),
             isThreeLine: true,
             onTap: () async {
@@ -208,12 +334,11 @@ extension _WorkspaceOverviewSections on _WorkspacePageState {
                   },
                 );
               }
-              final section = _sectionForNotification('${item['link'] ?? ''}');
-              if (mounted)
-                _updateWorkspace(() {
-                  if (section != null) _navigationCubit.openSection(section);
-                  _navigationCubit.refresh();
-                });
+              final section = _sectionForNotification(
+                '${item['link'] ?? ''}',
+                '${item['kind'] ?? ''}',
+              );
+              if (mounted) _navigateTo(section ?? 'notifications');
             },
           ),
       ],
@@ -235,17 +360,26 @@ extension _WorkspaceOverviewSections on _WorkspacePageState {
         ),
       ),
     );
-    if (mounted) _updateWorkspace(() => _navigationCubit.refresh());
+    if (mounted) _updateWorkspace(() => _reloadSection());
   }
 
-  String? _sectionForNotification(String link) {
+  String? _sectionForNotification(String link, String kind) {
     final path = Uri.tryParse(link)?.path ?? link;
     if (path.startsWith('/cards')) return 'cards';
     if (path.startsWith('/activity')) return 'activity';
     if (path.startsWith('/verification')) return 'verification';
-    if (path.startsWith('/account')) return 'account';
+    if (path.startsWith('/account')) return _admin ? 'account' : 'wallet';
     if (path.startsWith('/admin/funds')) return _admin ? 'funds' : 'wallet';
     if (path.startsWith('/cardholders')) return _admin ? 'clients' : null;
+    if (path.startsWith('/admin/connections') || path.startsWith('/settings')) {
+      return _admin ? 'connection' : null;
+    }
+    if (path.startsWith('/admin/support')) return _admin ? 'support' : null;
+    if (path.startsWith('/assistant')) return 'assistant';
+    if (kind == 'verification') return 'verification';
+    if (kind == 'funds') return _admin ? 'funds' : 'wallet';
+    if (kind == 'card_request' || kind == 'card') return 'cards';
+    if (kind == 'payment') return 'activity';
     return null;
   }
 
@@ -262,6 +396,12 @@ extension _WorkspaceOverviewSections on _WorkspacePageState {
                 .toLowerCase();
         return matchesStatus && (query.isEmpty || haystack.contains(query));
       }).toList();
+      final registration = Map<String, dynamic>.from(
+        data['registration'] as Map? ?? const {},
+      );
+      final requestState = Map<String, dynamic>.from(
+        registration['card_request'] as Map? ?? const {},
+      );
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -287,14 +427,14 @@ extension _WorkspaceOverviewSections on _WorkspacePageState {
               'Available account balance',
               'USD ${Map<String, dynamic>.from(data['wallet'] as Map)['available'] ?? 0}',
             ),
-            _actionButton(
-              'Request a card',
-              Icons.add_card_rounded,
-              () => _requestCard(
-                Map<String, dynamic>.from(data['registration'] as Map),
+            _clientCardRequestControls(
+              registration,
+              wallet: Map<String, dynamic>.from(
+                data['wallet'] as Map? ?? const {},
               ),
             ),
-            _actionButton('Add funds', Icons.savings_rounded, _reportDeposit),
+            if (requestState['verified'] == true)
+              _actionButton('Add funds', Icons.savings_rounded, _reportDeposit),
           ],
           const SizedBox(height: 8),
           Wrap(
@@ -383,38 +523,44 @@ extension _WorkspaceOverviewSections on _WorkspacePageState {
                   ? 'Payments, refunds and card updates across your workspace.'
                   : 'A clear view of payments, refunds and updates on your cards.',
             ),
-            Wrap(
-              spacing: 7,
-              runSpacing: 2,
-              children: [
-                for (final pair in const [
-                  ('all', 'All activity'),
-                  ('spend', 'Payments'),
-                  ('refund', 'Refunds'),
-                  ('event', 'Card updates'),
-                ])
-                  ChoiceChip(
-                    label: Text(pair.$2),
-                    selected: _activityKindFilter == pair.$1,
-                    onSelected: (_) =>
-                        setLocal(() => _activityKindFilter = pair.$1),
-                    selectedColor: const Color(0xFFF7EEF3),
-                    labelStyle: TextStyle(
-                      color: _activityKindFilter == pair.$1
-                          ? const Color(0xFF74144F)
-                          : const Color(0xFF68758A),
-                      fontWeight: FontWeight.w700,
-                    ),
-                    side: BorderSide(
-                      color: _activityKindFilter == pair.$1
-                          ? const Color(0xFFD9B7CA)
-                          : const Color(0xFFE5E2E7),
-                    ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(7),
-                    ),
-                  ),
-              ],
+            SizedBox(
+              height: 48,
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    for (final entry in const [
+                      ('all', 'All activity'),
+                      ('spend', 'Payments'),
+                      ('refund', 'Refunds'),
+                      ('event', 'Card updates'),
+                    ].indexed) ...[
+                      if (entry.$1 > 0) const SizedBox(width: 8),
+                      ChoiceChip(
+                        label: Text(entry.$2.$2),
+                        selected: _activityKindFilter == entry.$2.$1,
+                        onSelected: (_) =>
+                            setLocal(() => _activityKindFilter = entry.$2.$1),
+                        selectedColor: const Color(0xFFF5ECF2),
+                        labelStyle: TextStyle(
+                          color: _activityKindFilter == entry.$2.$1
+                              ? const Color(0xFF71164F)
+                              : const Color(0xFF68758A),
+                          fontWeight: FontWeight.w700,
+                        ),
+                        side: BorderSide(
+                          color: _activityKindFilter == entry.$2.$1
+                              ? const Color(0xFFD9B7CA)
+                              : const Color(0xFFE2E6EC),
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(9),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
             ),
             const SizedBox(height: 9),
             TextField(
@@ -485,28 +631,44 @@ extension _WorkspaceOverviewSections on _WorkspacePageState {
     );
   }
 
-  Widget _emptyState(IconData icon, String title, String detail) => Card(
-    child: Padding(
-      padding: const EdgeInsets.all(22),
-      child: Column(
-        children: [
-          Icon(icon, size: 30, color: const Color(0xFFB88A3B)),
-          const SizedBox(height: 8),
-          Text(
-            title,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              fontWeight: FontWeight.w800,
-              color: Color(0xFF14263D),
+  Widget _emptyState(IconData icon, String title, String detail) => SizedBox(
+    width: double.infinity,
+    child: Card(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 28),
+        child: Column(
+          children: [
+            Container(
+              width: 52,
+              height: 52,
+              decoration: BoxDecoration(
+                color: const Color(0xFFF5ECF2),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(icon, size: 25, color: const Color(0xFF71164F)),
             ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            detail,
-            textAlign: TextAlign.center,
-            style: const TextStyle(color: Color(0xFF68758A), fontSize: 12),
-          ),
-        ],
+            const SizedBox(height: 14),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontWeight: FontWeight.w800,
+                color: Color(0xFF14263D),
+                fontSize: 15,
+              ),
+            ),
+            const SizedBox(height: 5),
+            Text(
+              detail,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: Color(0xFF68758A),
+                fontSize: 13,
+                height: 1.4,
+              ),
+            ),
+          ],
+        ),
       ),
     ),
   );
@@ -630,6 +792,24 @@ extension _WorkspaceOverviewSections on _WorkspacePageState {
                                 ),
                               ],
                             ),
+                            if (_busyCardId == '${card['id']}')
+                              Positioned.fill(
+                                child: DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xAA14263D),
+                                    borderRadius: BorderRadius.circular(13),
+                                  ),
+                                  child: const Center(
+                                    child: SizedBox.square(
+                                      dimension: 30,
+                                      child: CircularProgressIndicator(
+                                        color: Colors.white,
+                                        strokeWidth: 2.5,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
                             const Spacer(),
                             Text(
                               '••••  ••••  ••••  ${card['last4'] ?? '••••'}',
@@ -728,8 +908,8 @@ extension _WorkspaceOverviewSections on _WorkspacePageState {
 
   Widget _sectionHeader(String title, String subtitle) => Container(
     width: double.infinity,
-    margin: const EdgeInsets.only(top: 8, bottom: 14),
-    padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
+    margin: const EdgeInsets.only(top: 4, bottom: 12),
+    padding: const EdgeInsets.fromLTRB(16, 15, 16, 16),
     decoration: BoxDecoration(
       gradient: const LinearGradient(
         colors: [Color(0xFF14263D), Color(0xFF52203F)],
@@ -763,19 +943,23 @@ extension _WorkspaceOverviewSections on _WorkspacePageState {
             ),
           ],
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
         Text(
           title,
-          style: Theme.of(context).textTheme.headlineSmall
-              ?.copyWith(color: Colors.white),
+          style: Theme.of(context).textTheme.titleLarge?.copyWith(
+            color: Colors.white,
+            fontSize: 22,
+            height: 1.2,
+            letterSpacing: -.35,
+          ),
         ),
-        const SizedBox(height: 5),
+        const SizedBox(height: 4),
         Text(
           subtitle,
           style: const TextStyle(
             color: Color(0xFFE5D7E0),
-            fontSize: 13,
-            height: 1.45,
+            fontSize: 12.5,
+            height: 1.4,
           ),
         ),
       ],
@@ -801,113 +985,140 @@ extension _WorkspaceOverviewSections on _WorkspacePageState {
         : label.contains('pending') || label.contains('request')
         ? const Color(0xFFB88A3B)
         : const Color(0xFF74144F);
-    return Card(
-      child: IntrinsicHeight(
-        child: Row(
-          children: [
-            Container(
-              width: 4,
-              decoration: BoxDecoration(
-                color: accent,
-                borderRadius: const BorderRadius.horizontal(
-                  left: Radius.circular(9),
+    return SizedBox(
+      width: double.infinity,
+      child: Card(
+        child: IntrinsicHeight(
+          child: Row(
+            children: [
+              Container(
+                width: 4,
+                decoration: BoxDecoration(
+                  color: accent,
+                  borderRadius: const BorderRadius.horizontal(
+                    left: Radius.circular(9),
+                  ),
                 ),
               ),
-            ),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 13, 12, 14),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title.toUpperCase(),
-                      style: const TextStyle(
-                        color: Color(0xFF7B7180),
-                        fontSize: 10,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: .8,
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 13, 12, 14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title.toUpperCase(),
+                        style: const TextStyle(
+                          color: Color(0xFF7B7180),
+                          fontSize: 10,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: .8,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 7),
-                    Text(
-                      value,
-                      style: Theme.of(context).textTheme.titleMedium
-                          ?.copyWith(fontSize: 17),
-                    ),
-                  ],
+                      const SizedBox(height: 7),
+                      Text(
+                        value,
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(fontSize: 17),
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _actionButton(String label, IconData icon, VoidCallback action) =>
-      Padding(
-        padding: const EdgeInsets.symmetric(vertical: 5),
-        child: Material(
-          color: Colors.white,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(8),
-            side: const BorderSide(color: Color(0xFFE5E2E7)),
-          ),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(8),
-            onTap: action,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
-              child: Row(
-                children: [
-                  Container(
-                    width: 38,
-                    height: 38,
-                    decoration: BoxDecoration(
-                      color:
-                          icon == Icons.savings_rounded ||
-                              icon == Icons.account_balance_wallet_rounded
-                          ? const Color(0xFFE8F2EC)
-                          : icon == Icons.verified_user_rounded
-                          ? const Color(0xFFFBF5E8)
-                          : const Color(0xFFF7EEF3),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Icon(
-                      icon,
-                      color:
-                          icon == Icons.savings_rounded ||
-                              icon == Icons.account_balance_wallet_rounded
-                          ? const Color(0xFF167653)
-                          : icon == Icons.verified_user_rounded
-                          ? const Color(0xFFB88A3B)
-                          : const Color(0xFF74144F),
-                      size: 20,
+  Widget _actionButton(
+    String label,
+    IconData icon,
+    FutureOr<void> Function() action,
+  ) {
+    final busy = _busyAction == label;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Material(
+        color: Colors.white,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+          side: const BorderSide(color: Color(0xFFE5E2E7)),
+        ),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: _busyAction != null
+              ? null
+              : () async {
+                  setState(() => _busyAction = label);
+                  try {
+                    await action();
+                  } catch (error) {
+                    if (mounted)
+                      _updateWorkspace(() => _error = _friendly(error));
+                  } finally {
+                    if (mounted) setState(() => _busyAction = null);
+                  }
+                },
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
+            child: Row(
+              children: [
+                Container(
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    color:
+                        icon == Icons.savings_rounded ||
+                            icon == Icons.account_balance_wallet_rounded
+                        ? const Color(0xFFE8F2EC)
+                        : icon == Icons.verified_user_rounded
+                        ? const Color(0xFFFBF5E8)
+                        : const Color(0xFFF7EEF3),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Icon(
+                    icon,
+                    color:
+                        icon == Icons.savings_rounded ||
+                            icon == Icons.account_balance_wallet_rounded
+                        ? const Color(0xFF167653)
+                        : icon == Icons.verified_user_rounded
+                        ? const Color(0xFFB88A3B)
+                        : const Color(0xFF74144F),
+                    size: 20,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    label,
+                    style: const TextStyle(
+                      color: Color(0xFF17243B),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      label,
-                      style: const TextStyle(
-                        color: Color(0xFF17243B),
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
+                ),
+                if (busy)
+                  const SizedBox.square(
+                    dimension: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                else
                   const Icon(
                     Icons.arrow_forward_ios,
                     size: 14,
                     color: Color(0xFF8B8490),
                   ),
-                ],
-              ),
+              ],
             ),
           ),
         ),
-      );
+      ),
+    );
+  }
 
   Widget _recordList(
     String title,
@@ -917,34 +1128,39 @@ extension _WorkspaceOverviewSections on _WorkspacePageState {
     final records = raw is List
         ? raw.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList()
         : <Map<String, dynamic>>[];
-    return Card(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Text(
-              '$title · ${records.length}',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-          ),
-          if (records.isEmpty)
-            const Padding(
-              padding: EdgeInsets.fromLTRB(16, 0, 16, 16),
-              child: Text('Nothing to show yet.'),
-            ),
-          for (final item in records)
-            ListTile(
-              title: Text(_recordTitle(item)),
-              subtitle: Text(
-                _recordSubtitle(item),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
+    return SizedBox(
+      width: double.infinity,
+      child: Card(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(
+                '$title · ${records.length}',
+                style: Theme.of(context).textTheme.titleMedium,
               ),
-              trailing: onTap == null ? null : const Icon(Icons.chevron_right),
-              onTap: onTap == null ? null : () => onTap(item),
             ),
-        ],
+            if (records.isEmpty)
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 0, 16, 16),
+                child: Text('Nothing to show yet.'),
+              ),
+            for (final item in records)
+              ListTile(
+                title: Text(_recordTitle(item)),
+                subtitle: Text(
+                  _recordSubtitle(item),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                trailing: onTap == null
+                    ? null
+                    : const Icon(Icons.chevron_right),
+                onTap: onTap == null ? null : () => onTap(item),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -957,7 +1173,8 @@ extension _WorkspaceOverviewSections on _WorkspacePageState {
     item['amount'] == null
         ? null
         : '${item['amount']} ${item['currency'] ?? 'USD'}',
-    item['occurred_at'] ?? item['created_date'],
+    if (formatZ8DateTime(item['occurred_at'] ?? item['created_date']) != '—')
+      formatZ8DateTime(item['occurred_at'] ?? item['created_date']),
   ].where((v) => v != null && '$v'.isNotEmpty).join(' · ');
 
   Widget _requestCards(List<dynamic> raw) => Card(

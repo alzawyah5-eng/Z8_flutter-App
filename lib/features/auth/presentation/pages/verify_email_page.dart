@@ -18,6 +18,7 @@ class VerifyEmailPage extends StatefulWidget {
 class _VerifyEmailPageState extends State<VerifyEmailPage> {
   final _formKey = GlobalKey<FormState>();
   final _code = TextEditingController();
+  bool _resending = false;
 
   @override
   void dispose() {
@@ -37,7 +38,13 @@ class _VerifyEmailPageState extends State<VerifyEmailPage> {
   }
 
   Future<void> _resend() async {
-    await context.read<AuthCubit>().resendRegistrationCode(widget.email);
+    if (_resending) return;
+    setState(() => _resending = true);
+    try {
+      await context.read<AuthCubit>().resendRegistrationCode(widget.email);
+    } finally {
+      if (mounted) setState(() => _resending = false);
+    }
   }
 
   @override
@@ -72,7 +79,16 @@ class _VerifyEmailPageState extends State<VerifyEmailPage> {
           ),
         ),
         const SizedBox(height: 10),
-        TextButton(onPressed: _resend, child: const Text('Send a new code')),
+        TextButton.icon(
+          onPressed: _resending ? null : _resend,
+          icon: _resending
+              ? const SizedBox.square(
+                  dimension: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.mark_email_unread_outlined, size: 18),
+          label: Text(_resending ? 'Sending code…' : 'Send a new code'),
+        ),
       ],
     ),
     footer: TextButton.icon(

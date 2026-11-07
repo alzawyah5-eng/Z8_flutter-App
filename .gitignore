@@ -50,3 +50,4 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+android/app/upload_certificate.pem

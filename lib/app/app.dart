@@ -7,6 +7,7 @@ import '../core/theme/app_theme.dart';
 import '../core/network/network_status_gate.dart';
 import '../core/network/backend_api.dart';
 import '../core/notifications/notification_navigation.dart';
+import '../core/notifications/notification_service.dart';
 import '../features/auth/presentation/bloc/auth_cubit.dart';
 import '../features/auth/presentation/pages/admin_login_page.dart';
 import '../features/auth/presentation/pages/forgot_password_page.dart';
@@ -38,11 +39,16 @@ class Z8App extends StatelessWidget {
           '/register': (_) => const RegisterPage(),
           '/forgot-password': (_) => const ForgotPasswordPage(),
           '/admin/login': (_) => const AdminLoginPage(),
-          '/signed-in': (_) => const WorkspacePage(),
-          '/workspace': (_) => const WorkspacePage(),
           '/not-registered': (_) => const UserNotRegisteredPage(),
         },
         onGenerateRoute: (settings) {
+          if (settings.name == '/signed-in' || settings.name == '/workspace') {
+            return MaterialPageRoute<void>(
+              settings: settings,
+              builder: (_) =>
+                  WorkspacePage(initialSection: settings.arguments as String?),
+            );
+          }
           if (settings.name == '/verify-email') {
             final email = settings.arguments as String?;
             if (email != null) {
@@ -91,7 +97,14 @@ class _AuthEntryPageState extends State<_AuthEntryPage> {
         await BackendApi.getMe(
           (await FirebaseAuth.instance.currentUser!.getIdToken(true))!,
         );
-        if (mounted) Navigator.pushReplacementNamed(context, '/workspace');
+        if (mounted) {
+          final section = NotificationService.takePendingSection();
+          Navigator.pushReplacementNamed(
+            context,
+            '/workspace',
+            arguments: section,
+          );
+        }
       } catch (_) {
         await FirebaseAuth.instance.signOut();
         if (mounted) Navigator.pushReplacementNamed(context, '/login');

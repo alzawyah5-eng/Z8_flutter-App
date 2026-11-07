@@ -102,9 +102,6 @@ class BackendApi {
     );
   }
 
-  static Future<Map<String, dynamic>> sendNotificationTest(String idToken) =>
-      _request('POST', '/me/notifications/test', idToken: idToken);
-
   static Future<Map<String, dynamic>> deleteAccount(
     String idToken,
     String email,
