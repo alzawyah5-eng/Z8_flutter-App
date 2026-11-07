@@ -448,6 +448,8 @@ extension _WorkspaceCardVerificationSections on _WorkspacePageState {
     final imagePicker = ImagePicker();
     XFile? front, back;
     final selected = <String, String>{};
+    final accountEmail = FirebaseAuth.instance.currentUser?.email?.trim() ?? '';
+    final needsMobile = accountEmail.length > 40;
     final fields = <_FieldSpec>[
       const _FieldSpec('firstName', 'First name', required: true),
       const _FieldSpec('lastName', 'Last name', required: true),
@@ -466,13 +468,19 @@ extension _WorkspaceCardVerificationSections on _WorkspacePageState {
       const _FieldSpec(
         'mobilePrefix',
         'Country calling code',
-        required: true,
+        required: false,
         dial: true,
       ),
-      const _FieldSpec('mobile', 'Mobile number', required: true),
+      _FieldSpec(
+        'mobile',
+        'Mobile number',
+        required: needsMobile,
+        keyboardType: TextInputType.phone,
+        helperText: needsMobile ? 'Required because the account email is too long for PhotonPay.' : 'Optional when your account email is accepted.',
+      ),
       const _FieldSpec('residentialAddress', 'Street address', required: true),
       const _FieldSpec('residentialCity', 'City', required: true),
-      const _FieldSpec('residentialState', 'State / province'),
+      const _FieldSpec('residentialState', 'State / province', required: true),
       const _FieldSpec('residentialPostalCode', 'Postal code', required: true),
       const _FieldSpec(
         'residentialCountryCode',
@@ -484,6 +492,7 @@ extension _WorkspaceCardVerificationSections on _WorkspacePageState {
         'certType',
         'ID document type',
         required: true,
+        helperText: 'Choose a type to show its required photo fields.',
         options: [
           _FieldOption('passport', 'Passport'),
           _FieldOption('id_card', 'National ID card'),
@@ -512,6 +521,86 @@ extension _WorkspaceCardVerificationSections on _WorkspacePageState {
     var submitting = false;
     var pickingFront = false;
     var pickingBack = false;
+    Future<void> chooseIdPhoto({
+      required bool isFront,
+      required BuildContext dialogContext,
+      required StateSetter setDialog,
+    }) async {
+      final source = await showModalBottomSheet<ImageSource>(
+        context: dialogContext,
+        useSafeArea: true,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+        ),
+        builder: (sheetContext) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  isFront ? 'Add the front photo' : 'Add the back photo',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 8),
+                ListTile(
+                  leading: const CircleAvatar(
+                    child: Icon(Icons.camera_alt_outlined),
+                  ),
+                  title: const Text('Take a photo'),
+                  subtitle: const Text('Open your camera'),
+                  onTap: () => Navigator.pop(sheetContext, ImageSource.camera),
+                ),
+                ListTile(
+                  leading: const CircleAvatar(
+                    child: Icon(Icons.photo_library_outlined),
+                  ),
+                  title: const Text('Choose from photos'),
+                  subtitle: const Text('Select an existing JPG or PNG'),
+                  onTap: () => Navigator.pop(sheetContext, ImageSource.gallery),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      if (source == null || !dialogContext.mounted) return;
+      setDialog(() {
+        if (isFront) {
+          pickingFront = true;
+        } else {
+          pickingBack = true;
+        }
+        photoWarning = null;
+      });
+      try {
+        final photo = await imagePicker.pickImage(
+          source: source,
+          imageQuality: 80,
+        );
+        if (photo != null && dialogContext.mounted) {
+          setDialog(() {
+            if (isFront) {
+              front = photo;
+            } else {
+              back = photo;
+            }
+          });
+        }
+      } catch (_) {
+        if (dialogContext.mounted) {
+          setDialog(() => photoWarning = 'Could not open the selected source. Check its permission and try again.');
+        }
+      } finally {
+        if (dialogContext.mounted) {
+          setDialog(() {
+            pickingFront = false;
+            pickingBack = false;
+          });
+        }
+      }
+    }
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
@@ -521,6 +610,7 @@ extension _WorkspaceCardVerificationSections on _WorkspacePageState {
             width: 520,
             child: SingleChildScrollView(
               child: Form(
+                autovalidateMode: AutovalidateMode.disabled,
                 key: key,
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -534,53 +624,19 @@ extension _WorkspaceCardVerificationSections on _WorkspacePageState {
                           setDialog,
                         ),
                       ),
-                    Wrap(
-                      spacing: 8,
-                      children: [
-                        OutlinedButton.icon(
-                          onPressed: submitting || pickingFront || pickingBack
-                              ? null
-                              : () async {
-                                  setDialog(() => pickingFront = true);
-                                  try {
-                                    front = await imagePicker.pickImage(
-                                      source: ImageSource.gallery,
-                                      imageQuality: 80,
-                                    );
-                                  } finally {
-                                    setDialog(() => pickingFront = false);
-                                  }
-                                },
-                          icon: pickingFront
-                              ? const SizedBox.square(
-                                  dimension: 18,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : const Icon(Icons.image),
-                          label: Text(
-                            front == null
-                                ? 'Front / passport page'
-                                : 'Front selected',
-                          ),
-                        ),
-                        if (controllers['certType']?.text != 'passport')
+                    if (controllers['certType']!.text.isNotEmpty)
+                      Wrap(
+                        spacing: 8,
+                        children: [
                           OutlinedButton.icon(
                             onPressed: submitting || pickingFront || pickingBack
                                 ? null
-                                : () async {
-                                    setDialog(() => pickingBack = true);
-                                    try {
-                                      back = await imagePicker.pickImage(
-                                        source: ImageSource.gallery,
-                                        imageQuality: 80,
-                                      );
-                                    } finally {
-                                      setDialog(() => pickingBack = false);
-                                    }
-                                  },
-                            icon: pickingBack
+                                : () => chooseIdPhoto(
+                                    isFront: true,
+                                    dialogContext: dialogContext,
+                                    setDialog: setDialog,
+                                  ),
+                            icon: pickingFront
                                 ? const SizedBox.square(
                                     dimension: 18,
                                     child: CircularProgressIndicator(
@@ -589,11 +645,36 @@ extension _WorkspaceCardVerificationSections on _WorkspacePageState {
                                   )
                                 : const Icon(Icons.image),
                             label: Text(
-                              back == null ? 'Back of ID' : 'Back selected',
+                              front == null
+                                  ? controllers['certType']!.text == 'passport'
+                                        ? 'Passport photo page'
+                                        : 'Front of ID'
+                                  : 'Front selected',
                             ),
                           ),
-                      ],
-                    ),
+                          if (controllers['certType']!.text != 'passport')
+                            OutlinedButton.icon(
+                              onPressed: submitting || pickingFront || pickingBack
+                                  ? null
+                                  : () => chooseIdPhoto(
+                                      isFront: false,
+                                      dialogContext: dialogContext,
+                                      setDialog: setDialog,
+                                    ),
+                              icon: pickingBack
+                                  ? const SizedBox.square(
+                                      dimension: 18,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : const Icon(Icons.image),
+                              label: Text(
+                                back == null ? 'Back of ID' : 'Back selected',
+                              ),
+                            ),
+                        ],
+                      ),
                     if (photoWarning != null)
                       Text(
                         photoWarning!,
@@ -618,10 +699,23 @@ extension _WorkspaceCardVerificationSections on _WorkspacePageState {
                       if (!key.currentState!.validate()) return;
                       final mobileDigits = controllers['mobilePrefix']!.text
                           .replaceAll(RegExp(r'[^0-9]'), '');
-                      if (!RegExp(r'^\d{1,4}$').hasMatch(mobileDigits)) {
+                      final phone = controllers['mobile']!.text.replaceAll(
+                        RegExp(r'\D'),
+                        '',
+                      );
+                      if (phone.isNotEmpty &&
+                          !RegExp(r'^\d{1,4}$').hasMatch(mobileDigits)) {
                         setDialog(
                           () => photoWarning = 'Choose a valid country calling code, such as +971.',
                         );
+                        return;
+                      }
+                      if (needsMobile && phone.isEmpty) {
+                        setDialog(() => photoWarning = 'Add a mobile number because your login email is longer than PhotonPay allows.');
+                        return;
+                      }
+                      if (phone.isNotEmpty && phone.length > 11) {
+                        setDialog(() => photoWarning = 'Mobile number may have at most 11 digits.');
                         return;
                       }
                       if (front == null ||
@@ -631,6 +725,20 @@ extension _WorkspaceCardVerificationSections on _WorkspacePageState {
                           () => photoWarning = 'Choose the required ID photos.',
                         );
                         return;
+                      }
+                      for (final photo in [front, back].whereType<XFile>()) {
+                        final mime = (photo.mimeType ?? '').toLowerCase();
+                        final name = photo.name.toLowerCase();
+                        final isJpeg = mime == 'image/jpeg' || name.endsWith('.jpg') || name.endsWith('.jpeg');
+                        final isPng = mime == 'image/png' || name.endsWith('.png');
+                        if (!isJpeg && !isPng) {
+                          setDialog(() => photoWarning = 'Use a JPG or PNG ID photo.');
+                          return;
+                        }
+                        if (await photo.length() > 6 * 1024 * 1024) {
+                          setDialog(() => photoWarning = 'Each ID photo must be 6 MB or smaller. Choose a smaller photo.');
+                          return;
+                        }
                       }
                       setDialog(() {
                         submitting = true;
@@ -667,7 +775,10 @@ extension _WorkspaceCardVerificationSections on _WorkspacePageState {
                           for (final e in controllers.entries)
                             e.key: e.value.text.trim(),
                         });
-                        selected['mobilePrefix'] = '+$mobileDigits';
+                        selected['mobilePrefix'] = mobileDigits.isEmpty
+                            ? ''
+                            : '+$mobileDigits';
+                        selected['mobile'] = phone;
                         final result = await BackendApi.photonPayAction(
                           token,
                           'submit_registration',

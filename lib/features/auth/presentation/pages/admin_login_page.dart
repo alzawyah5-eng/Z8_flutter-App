@@ -51,10 +51,9 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
     title: 'Admin sign-in',
     subtitle: 'Sign in with your administrator account to manage Z8.',
     form: AuthFormCard(
-      showGoogle: true,
-      googleAdminOnly: true,
       children: [
         Form(
+          autovalidateMode: AutovalidateMode.disabled,
           key: _formKey,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,

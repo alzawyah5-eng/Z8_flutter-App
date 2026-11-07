@@ -6,9 +6,11 @@ class Z8Country {
 }
 
 const z8Countries = <Z8Country>[
+  // Algeria is the current launch focus; keep every other supported country
+  // available so expansion does not require changing the picker model.
+  Z8Country('DZ', "Algeria", '213'),
   Z8Country('AF', "Afghanistan", '93'),
   Z8Country('AL', "Albania", '355'),
-  Z8Country('DZ', "Algeria", '213'),
   Z8Country('AD', "Andorra", '376'),
   Z8Country('AO', "Angola", '244'),
   Z8Country('AG', "Antigua and Barbuda", '1'),

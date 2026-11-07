@@ -56,6 +56,7 @@ class _VerifyEmailPageState extends State<VerifyEmailPage> {
     form: AuthFormCard(
       children: [
         Form(
+          autovalidateMode: AutovalidateMode.disabled,
           key: _formKey,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,

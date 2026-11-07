@@ -42,9 +42,7 @@ extension _WorkspaceAccountSections on _WorkspacePageState {
       ))
         Card(
           child: ListTile(
-            title: Text(
-              '${item['metadata']?['title'] ?? item['metadata']?['name'] ?? (agent == 'technical_support' ? 'Support conversation' : 'Card assistant conversation')}',
-            ),
+            title: Text(_conversationTitle(item, agent)),
             subtitle: Text(
               '${(item['messages'] as List? ?? []).length} messages',
             ),
@@ -71,6 +69,19 @@ extension _WorkspaceAccountSections on _WorkspacePageState {
         ),
     ],
   );
+
+  String _conversationTitle(Map<String, dynamic> conversation, String agent) {
+    final metadata = conversation['metadata'];
+    if (metadata is Map) {
+      for (final key in const ['title', 'name']) {
+        final value = metadata[key]?.toString().trim();
+        if (value != null && value.isNotEmpty && value != 'null') return value;
+      }
+    }
+    return agent == 'technical_support'
+        ? 'Technical support'
+        : 'Card assistant';
+  }
 
   Future<void> _deleteAccount() async {
     final confirmation = await _ask(

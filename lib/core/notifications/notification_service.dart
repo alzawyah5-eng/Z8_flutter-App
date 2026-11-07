@@ -5,7 +5,6 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../../firebase_config.dart';
 import '../network/backend_api.dart';
@@ -22,11 +21,13 @@ class NotificationService {
   NotificationService._();
 
   static final FirebaseMessaging _messaging = FirebaseMessaging.instance;
-  static const MethodChannel _notificationChannel = MethodChannel(
-    'com.nakhba.z8_portal/notifications',
-  );
+  static final ValueNotifier<ForegroundNotice?> foregroundNotice =
+      ValueNotifier(null);
   static String? _registeredToken;
   static String? _pendingSection;
+  static String? _foregroundLink;
+  static Future<NotificationSettings>? _permissionRequest;
+  static bool _permissionPrompted = false;
   static bool _initialized = false;
 
   static String? takePendingSection() {
@@ -39,11 +40,10 @@ class NotificationService {
     if (_initialized || kIsWeb) return;
     _initialized = true;
     FirebaseMessaging.onBackgroundMessage(z8FirebaseMessagingBackgroundHandler);
-    final showForegroundBanner = defaultTargetPlatform == TargetPlatform.iOS;
     await _messaging.setForegroundNotificationPresentationOptions(
-      alert: showForegroundBanner,
-      badge: showForegroundBanner,
-      sound: showForegroundBanner,
+      alert: false,
+      badge: false,
+      sound: false,
     );
     FirebaseMessaging.onMessage.listen(_showForeground);
     FirebaseMessaging.onMessageOpenedApp.listen(_openMessage);
@@ -61,12 +61,10 @@ class NotificationService {
   static Future<void> registerForCurrentUser() async {
     if (kIsWeb || FirebaseAuth.instance.currentUser == null) return;
     try {
-      final settings = await _messaging.requestPermission(
-        alert: true,
-        badge: true,
-        sound: true,
-        provisional: false,
-      );
+      var settings = await _messaging.getNotificationSettings();
+      if (!_hasNotificationAccess(settings) && !_permissionPrompted) {
+        settings = await _requestPermission();
+      }
       if (settings.authorizationStatus == AuthorizationStatus.denied) return;
       if (defaultTargetPlatform == TargetPlatform.iOS) {
         for (var attempt = 0; attempt < 10; attempt++) {
@@ -82,6 +80,35 @@ class NotificationService {
       // Notification permission and delivery are optional to account sign-in.
     }
   }
+
+  static Future<void> requestPermissionAtStartup() async {
+    if (kIsWeb) return;
+    try {
+      await _requestPermission();
+    } catch (_) {
+      // Notification access is optional; sign-in and the workspace remain available.
+    }
+  }
+
+  static Future<NotificationSettings> _requestPermission() {
+    final pending = _permissionRequest;
+    if (pending != null) return pending;
+    final request = _messaging.requestPermission(
+      alert: true,
+      badge: true,
+      sound: true,
+      provisional: false,
+    );
+    _permissionRequest = request;
+    return request.whenComplete(() {
+      _permissionPrompted = true;
+      _permissionRequest = null;
+    });
+  }
+
+  static bool _hasNotificationAccess(NotificationSettings settings) =>
+      settings.authorizationStatus == AuthorizationStatus.authorized ||
+      settings.authorizationStatus == AuthorizationStatus.provisional;
 
   static Future<void> unregisterCurrentDevice() async {
     final user = FirebaseAuth.instance.currentUser;
@@ -119,52 +146,32 @@ class NotificationService {
 
   static void _showForeground(RemoteMessage message) {
     final notification = message.notification;
-    if (notification != null &&
-        defaultTargetPlatform == TargetPlatform.android) {
-      unawaited(
-        _showAndroidNotification(
-          notification.title ?? 'Z8',
-          notification.body ?? 'You have a new update.',
-        ),
-      );
+    final title = notification?.title?.trim();
+    final body = notification?.body?.trim();
+    final dataTitle = message.data['title']?.toString().trim();
+    final dataBody = message.data['body']?.toString().trim();
+    final visibleTitle = (title?.isNotEmpty == true ? title : dataTitle);
+    final visibleBody = (body?.isNotEmpty == true ? body : dataBody);
+    if ((visibleTitle == null || visibleTitle.isEmpty) &&
+        (visibleBody == null || visibleBody.isEmpty)) {
+      return;
     }
-    final context = notificationNavigatorKey.currentContext;
-    if (notification == null || context == null) return;
-    ScaffoldMessenger.maybeOf(context)
-      ?..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(
-            '${notification.title ?? 'Z8'}: '
-            '${notification.body ?? 'You have a new update.'}',
-          ),
-          behavior: SnackBarBehavior.floating,
-          action: SnackBarAction(
-            label: 'View',
-            onPressed: () => _openLink(message.data['link']?.toString()),
-          ),
-        ),
-      );
+    _foregroundLink = message.data['link']?.toString();
+    foregroundNotice.value = ForegroundNotice(
+      title: visibleTitle?.isNotEmpty == true ? visibleTitle! : 'Z8 update',
+      body: visibleBody ?? '',
+    );
   }
 
-  static Future<void> _showAndroidNotification(
-    String title,
-    String body,
-  ) async {
-    try {
-      await _notificationChannel.invokeMethod<void>('showNotification', {
-        'title': title,
-        'body': body,
-      });
-    } on PlatformException catch (error) {
-      debugPrint('Could not show foreground notification: ${error.message}');
-    } on MissingPluginException catch (error) {
-      // Hot reload cannot register MainActivity's native MethodChannel. Keep
-      // the in-app SnackBar working; a full Android rebuild installs the channel.
-      debugPrint(
-        'Android notification bridge is missing from the installed build (${error.message}). Stop the app and run flutter run to rebuild native code.',
-      );
-    }
+  static void openForegroundNotice() {
+    final link = _foregroundLink;
+    dismissForegroundNotice();
+    _openLink(link);
+  }
+
+  static void dismissForegroundNotice() {
+    _foregroundLink = null;
+    foregroundNotice.value = null;
   }
 
   static void _openMessage(RemoteMessage message) {
@@ -200,4 +207,11 @@ class NotificationService {
     }
     navigator.pushNamed('/workspace', arguments: section);
   }
+}
+
+class ForegroundNotice {
+  const ForegroundNotice({required this.title, required this.body});
+
+  final String title;
+  final String body;
 }

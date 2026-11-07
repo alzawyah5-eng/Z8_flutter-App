@@ -91,6 +91,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
       children: [
         if (!_completed && !_requestSent)
           Form(
+            autovalidateMode: AutovalidateMode.disabled,
             key: _formKey,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,

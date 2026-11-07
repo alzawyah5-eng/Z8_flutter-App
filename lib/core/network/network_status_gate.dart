@@ -18,36 +18,79 @@ class _NetworkStatusGateState extends State<NetworkStatusGate> {
   final InternetConnection _connection = InternetConnection();
   StreamSubscription<InternetStatus>? _subscription;
   Timer? _welcomeTimer;
+  Timer? _offlineTimer;
+  Timer? _retryTimer;
   bool _checking = true;
-  bool _connected = false;
+  bool _connected = true;
   bool _showWelcome = false;
-  bool _receivedStatusEvent = false;
 
   @override
   void initState() {
     super.initState();
     _subscription = _connection.onStatusChange.listen(_onStatus);
     _checkInitial();
+    _retryTimer = Timer.periodic(const Duration(seconds: 4), (_) {
+      if (!_connected) _checkConnection();
+    });
   }
 
   Future<void> _checkInitial() async {
-    final connected = await _connection.hasInternetAccess;
-    if (!mounted || _receivedStatusEvent) return;
-    setState(() {
-      _checking = false;
-      _connected = connected;
-    });
+    final connected = await _probe();
+    if (!mounted) return;
+    setState(() => _checking = false);
+    if (connected) {
+      _setConnected();
+    } else {
+      _scheduleOfflineConfirmation();
+    }
   }
 
   void _onStatus(InternetStatus status) {
     final connected = status == InternetStatus.connected;
-    _receivedStatusEvent = true;
-    final isReconnect = !_checking && !_connected && connected;
+    if (connected) _setConnected();
+    else _scheduleOfflineConfirmation();
+  }
+
+  Future<bool> _probe() async {
+    try {
+      return await _connection.hasInternetAccess.timeout(
+        const Duration(seconds: 5),
+        onTimeout: () => false,
+      );
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _checkConnection() async {
+    if (await _probe()) _setConnected();
+  }
+
+  void _scheduleOfflineConfirmation() {
+    _offlineTimer?.cancel();
+    _offlineTimer = Timer(const Duration(seconds: 3), () async {
+      if (!mounted) return;
+      if (await _probe()) {
+        _setConnected();
+        return;
+      }
+      if (mounted) {
+        setState(() {
+          _checking = false;
+          _connected = false;
+        });
+      }
+    });
+  }
+
+  void _setConnected() {
     if (!mounted) return;
+    _offlineTimer?.cancel();
+    final isReconnect = !_checking && !_connected;
     _welcomeTimer?.cancel();
     setState(() {
       _checking = false;
-      _connected = connected;
+      _connected = true;
       _showWelcome = isReconnect;
     });
     if (isReconnect) {
@@ -60,6 +103,8 @@ class _NetworkStatusGateState extends State<NetworkStatusGate> {
   @override
   void dispose() {
     _welcomeTimer?.cancel();
+    _offlineTimer?.cancel();
+    _retryTimer?.cancel();
     _subscription?.cancel();
     super.dispose();
   }
@@ -69,7 +114,7 @@ class _NetworkStatusGateState extends State<NetworkStatusGate> {
     return Stack(
       children: [
         widget.child,
-        if (_checking || !_connected)
+        if (!_checking && !_connected)
           Positioned.fill(
             child: Scaffold(
               backgroundColor: AppTheme.canvas,

@@ -49,6 +49,7 @@ class _LoginPageState extends State<LoginPage> {
       showGoogle: true,
       children: [
         Form(
+          autovalidateMode: AutovalidateMode.disabled,
           key: _formKey,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,

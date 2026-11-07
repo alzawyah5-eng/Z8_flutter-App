@@ -40,8 +40,10 @@
 	<true/>
 	<key>FirebaseMessagingAutoInitEnabled</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>Z8 Portal uses the camera only when you choose to take an ID photo.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Z8 Portal uses selected ID photos to submit identity verification.</string>
+	<string>Z8 Portal accesses only the ID photos you choose for identity verification.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>fetch</string>

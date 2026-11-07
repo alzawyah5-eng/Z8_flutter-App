@@ -56,6 +56,7 @@ class _RegisterPageState extends State<RegisterPage> {
       showGoogle: true,
       children: [
         Form(
+          autovalidateMode: AutovalidateMode.disabled,
           key: _formKey,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,

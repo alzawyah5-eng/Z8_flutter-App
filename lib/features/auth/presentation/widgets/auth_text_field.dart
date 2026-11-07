@@ -46,6 +46,7 @@ class _AuthTextFieldState extends State<AuthTextField> {
           const SizedBox(height: 8),
         ],
         TextFormField(
+          autovalidateMode: AutovalidateMode.disabled,
           controller: widget.controller,
           validator: widget.validator,
           keyboardType: widget.keyboardType,

@@ -407,6 +407,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
           title: Text(title),
           content: SingleChildScrollView(
             child: Form(
+              autovalidateMode: AutovalidateMode.disabled,
               key: formKey,
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -717,6 +718,31 @@ class _WorkspacePageState extends State<WorkspacePage> {
         field.required && (value ?? '').trim().isEmpty
         ? 'This field is required'
         : null;
+    String? validateText(String? value) {
+      final text = (value ?? '').trim();
+      final requiredError = requiredValue(value);
+      if (requiredError != null) return requiredError;
+      if (text.isEmpty) return null;
+      if ((field.key == 'firstName' || field.key == 'lastName') &&
+          !RegExp(r'^[\p{L} ]+$', unicode: true).hasMatch(text)) {
+        return 'Use letters and spaces only';
+      }
+      final maxLength = switch (field.key) {
+        'firstName' || 'lastName' => 40,
+        'residentialAddress' => 100,
+        'residentialCity' || 'residentialState' => 50,
+        'residentialPostalCode' => 10,
+        'certId' => 64,
+        _ => null,
+      };
+      if (maxLength != null && text.length > maxLength) {
+        return 'Use $maxLength characters or fewer';
+      }
+      if (field.key == 'mobile' && text.replaceAll(RegExp(r'\D'), '').length > 11) {
+        return 'Mobile number may have at most 11 digits';
+      }
+      return null;
+    }
     if (field.country || field.dial) {
       return FormField<String>(
         initialValue: controller.text.isEmpty ? null : controller.text,
@@ -807,6 +833,15 @@ class _WorkspacePageState extends State<WorkspacePage> {
     return TextFormField(
       controller: controller,
       keyboardType: field.keyboardType,
+      maxLength: switch (field.key) {
+        'firstName' || 'lastName' => 40,
+        'residentialAddress' => 100,
+        'residentialCity' || 'residentialState' => 50,
+        'residentialPostalCode' => 10,
+        'certId' => 64,
+        'mobile' => 11,
+        _ => null,
+      },
       maxLines: field.multiline ? 3 : 1,
       minLines: field.multiline ? 2 : 1,
       textCapitalization: field.key.toLowerCase().contains('email')
@@ -817,7 +852,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
         labelText: field.label,
         helperText: field.helperText,
       ),
-      validator: requiredValue,
+      validator: validateText,
     );
   }
 
