@@ -169,7 +169,21 @@ class AuthCubit extends Cubit<AuthState> {
       }
     } catch (e) {
       _logAuth('[Login Error] Profile check failed: $e');
-      if (_requiredAuth.currentUser?.uid == user.uid) {
+      final invalidSession =
+          e is FirebaseAuthException &&
+          const {
+            'user-disabled',
+            'user-not-found',
+            'user-token-expired',
+            'invalid-user-token',
+          }.contains(e.code);
+      final rejectedByBackend =
+          e is BackendApiException &&
+          (e.code == 'user_not_registered' ||
+              e.statusCode == 401 ||
+              e.statusCode == 403);
+      if ((invalidSession || rejectedByBackend) &&
+          _requiredAuth.currentUser?.uid == user.uid) {
         await _requiredAuth.signOut();
       }
       rethrow;
@@ -353,13 +367,19 @@ class AuthCubit extends Cubit<AuthState> {
       _logAuth(
         '[Auth Error] BackendApiException: code=${error.code}, status=${error.statusCode}, message=${error.toString()}',
       );
+      final sessionCanBeRetried =
+          _auth?.currentUser != null &&
+          error.code != 'user_not_registered' &&
+          error.statusCode != 401 &&
+          error.statusCode != 403;
       emit(
         AuthState(
           message: error.message,
+          signedIn: sessionCanBeRetried,
           userNotRegistered: error.code == 'user_not_registered',
         ),
       );
-      return false;
+      return sessionCanBeRetried;
     } on GoogleSignInException catch (error) {
       _logAuth(
         '[Auth Error] GoogleSignInException: code=${error.code.name}, description=${error.description}',

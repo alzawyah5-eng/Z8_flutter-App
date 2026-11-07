@@ -25,3 +25,8 @@ flutter:
   uses-material-design: true
   assets:
     - assets/images/
+  fonts:
+    - family: Manrope
+      fonts:
+        - asset: assets/fonts/Manrope-Variable.ttf
+          weight: 400

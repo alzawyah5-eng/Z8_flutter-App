@@ -1418,8 +1418,14 @@ class _WorkspacePageState extends State<WorkspacePage> {
                 Text(_error ?? 'Please sign in again.'),
                 const SizedBox(height: 12),
                 FilledButton(
-                  onPressed: _logout,
-                  child: const Text('Back to sign in'),
+                  onPressed: () {
+                    setState(() {
+                      _loading = true;
+                      _error = null;
+                    });
+                    unawaited(_loadProfile());
+                  },
+                  child: const Text('Try again'),
                 ),
               ],
             ),

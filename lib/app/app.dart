@@ -16,6 +16,7 @@ import '../features/auth/presentation/pages/register_page.dart';
 import '../features/auth/presentation/pages/user_not_registered_page.dart';
 import '../features/auth/presentation/pages/verify_email_page.dart';
 import '../features/workspace/workspace_page.dart';
+import '../features/splash/presentation/widgets/z8_splash_screen.dart';
 import '../firebase_config.dart';
 
 class Z8App extends StatelessWidget {
@@ -84,35 +85,72 @@ class _AuthEntryPage extends StatefulWidget {
 }
 
 class _AuthEntryPageState extends State<_AuthEntryPage> {
+  String? _restoreError;
+
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      if (!FirebaseConfig.isReady ||
-          FirebaseAuth.instance.currentUser == null) {
+    WidgetsBinding.instance.addPostFrameCallback((_) => _restoreSession());
+  }
+
+  bool _isInvalidSession(Object error) {
+    if (error is BackendApiException) {
+      return error.code == 'user_not_registered' ||
+          error.statusCode == 401 ||
+          error.statusCode == 403;
+    }
+    if (error is FirebaseAuthException) {
+      return const {
+        'user-disabled',
+        'user-not-found',
+        'user-token-expired',
+        'invalid-user-token',
+      }.contains(error.code);
+    }
+    return false;
+  }
+
+  Future<void> _restoreSession() async {
+    if (!FirebaseConfig.isReady) {
+      if (mounted) Navigator.pushReplacementNamed(context, '/login');
+      return;
+    }
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      if (mounted) Navigator.pushReplacementNamed(context, '/login');
+      return;
+    }
+    setState(() => _restoreError = null);
+    try {
+      // Reuse Firebase's persisted refresh token naturally. Forcing a refresh
+      // here turned temporary connectivity failures into false logouts.
+      final token = await user.getIdToken();
+      if (token == null) throw StateError('No Firebase session token.');
+      await BackendApi.getMe(token);
+      if (!mounted) return;
+      Navigator.pushReplacementNamed(
+        context,
+        '/workspace',
+        arguments: NotificationService.takePendingSection(),
+      );
+    } catch (error) {
+      if (_isInvalidSession(error)) {
+        await FirebaseAuth.instance.signOut();
         if (mounted) Navigator.pushReplacementNamed(context, '/login');
         return;
       }
-      try {
-        await BackendApi.getMe(
-          (await FirebaseAuth.instance.currentUser!.getIdToken(true))!,
+      if (mounted) {
+        setState(
+          () => _restoreError = 'You are still signed in. Z8 could not reconnect just now. Check your connection and retry.',
         );
-        if (mounted) {
-          final section = NotificationService.takePendingSection();
-          Navigator.pushReplacementNamed(
-            context,
-            '/workspace',
-            arguments: section,
-          );
-        }
-      } catch (_) {
-        await FirebaseAuth.instance.signOut();
-        if (mounted) Navigator.pushReplacementNamed(context, '/login');
       }
-    });
+    }
   }
 
   @override
-  Widget build(BuildContext context) =>
-      const Scaffold(body: Center(child: CircularProgressIndicator()));
+  Widget build(BuildContext context) => Z8SplashScreen(
+    message: _restoreError,
+    onRetry: _restoreError == null ? null : _restoreSession,
+    loading: _restoreError == null,
+  );
 }

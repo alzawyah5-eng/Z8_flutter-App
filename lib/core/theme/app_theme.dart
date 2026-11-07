@@ -40,7 +40,7 @@ abstract final class AppTheme {
       useMaterial3: true,
       colorScheme: colors,
       scaffoldBackgroundColor: canvas,
-      fontFamily: 'Roboto',
+      fontFamily: 'Manrope',
       appBarTheme: const AppBarTheme(
         backgroundColor: canvas,
         foregroundColor: ink,
