@@ -630,10 +630,12 @@ extension _WorkspaceCardVerificationSections on _WorkspacePageState {
                         ),
                       ),
                     if (controllers['certType']!.text.isNotEmpty)
-                      Wrap(
-                        spacing: 8,
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          OutlinedButton.icon(
+                          SizedBox(
+                            width: double.infinity,
+                            child: OutlinedButton.icon(
                             onPressed: submitting || pickingFront || pickingBack
                                 ? null
                                 : () => chooseIdPhoto(
@@ -656,6 +658,7 @@ extension _WorkspaceCardVerificationSections on _WorkspacePageState {
                                         : 'Front of ID'
                                   : 'Front selected',
                             ),
+                            ),
                           ),
                           if (front != null)
                             _verificationPhotoPreview(
@@ -669,7 +672,9 @@ extension _WorkspaceCardVerificationSections on _WorkspacePageState {
                               }),
                             ),
                           if (controllers['certType']!.text != 'passport')
-                            OutlinedButton.icon(
+                            SizedBox(
+                              width: double.infinity,
+                              child: OutlinedButton.icon(
                               onPressed: submitting || pickingFront || pickingBack
                                   ? null
                                   : () => chooseIdPhoto(
@@ -687,6 +692,7 @@ extension _WorkspaceCardVerificationSections on _WorkspacePageState {
                                   : const Icon(Icons.image),
                               label: Text(
                                 back == null ? 'Back of ID' : 'Back selected',
+                              ),
                               ),
                             ),
                           if (controllers['certType']!.text != 'passport' &&
@@ -710,13 +716,16 @@ extension _WorkspaceCardVerificationSections on _WorkspacePageState {
                       ),
                     const SizedBox(height: 12),
                     Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
                       children: [
-                        TextButton(
-                          onPressed: submitting ? null : () => Navigator.pop(dialogContext),
-                          child: const Text('Cancel'),
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: submitting ? null : () => Navigator.pop(dialogContext),
+                            child: const Text('Cancel'),
+                          ),
                         ),
-                        FilledButton(
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: FilledButton(
                           onPressed: submitting
                               ? null
                               : () async {
@@ -827,19 +836,16 @@ extension _WorkspaceCardVerificationSections on _WorkspacePageState {
                                     });
                                   }
                                 },
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              if (submitting) ...[
-                                const SizedBox.square(
-                                  dimension: 18,
-                                  child: CircularProgressIndicator(strokeWidth: 2),
-                                ),
-                                const SizedBox(width: 8),
-                              ],
-                              Text(submitting ? 'Submitting…' : 'Submit'),
-                            ],
+                          child: Semantics(
+                            label: submitting ? 'Submitting verification' : 'Submit verification',
+                            child: submitting
+                                ? const SizedBox.square(
+                                    dimension: 18,
+                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                  )
+                                : const Text('Submit'),
                           ),
+                        ),
                         ),
                       ],
                     ),
@@ -864,8 +870,8 @@ extension _WorkspaceCardVerificationSections on _WorkspacePageState {
     VoidCallback onRemove,
   ) =>
       Container(
-        width: 220,
-        height: 150,
+        width: double.infinity,
+        height: 200,
         clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
           color: const Color(0xFFF2F3F7),

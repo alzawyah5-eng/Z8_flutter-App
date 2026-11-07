@@ -6,7 +6,6 @@ import 'package:firebase_auth/firebase_auth.dart';
 import '../core/theme/app_theme.dart';
 import '../core/network/network_status_gate.dart';
 import '../core/network/backend_api.dart';
-import '../core/notifications/foreground_notification_banner.dart';
 import '../core/notifications/notification_navigation.dart';
 import '../core/notifications/notification_service.dart';
 import '../features/auth/presentation/bloc/auth_cubit.dart';
@@ -33,11 +32,7 @@ class Z8App extends StatelessWidget {
         navigatorKey: notificationNavigatorKey,
         theme: AppTheme.light,
         builder: (context, child) =>
-            NetworkStatusGate(
-              child: ForegroundNotificationBanner(
-                child: child ?? const SizedBox.shrink(),
-              ),
-            ),
+            NetworkStatusGate(child: child ?? const SizedBox.shrink()),
         initialRoute: _initialRoute,
         routes: {
           '/': (_) => const _AuthEntryPage(),

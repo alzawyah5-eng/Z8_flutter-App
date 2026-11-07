@@ -5,6 +5,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../firebase_config.dart';
 import '../network/backend_api.dart';
@@ -21,11 +22,11 @@ class NotificationService {
   NotificationService._();
 
   static final FirebaseMessaging _messaging = FirebaseMessaging.instance;
-  static final ValueNotifier<ForegroundNotice?> foregroundNotice =
-      ValueNotifier(null);
+  static const MethodChannel _nativeNotifications = MethodChannel(
+    'com.nakhba.z8_portal/notifications',
+  );
   static String? _registeredToken;
   static String? _pendingSection;
-  static String? _foregroundLink;
   static Future<NotificationSettings>? _permissionRequest;
   static bool _permissionPrompted = false;
   static bool _initialized = false;
@@ -39,11 +40,32 @@ class NotificationService {
   static Future<void> initialize() async {
     if (_initialized || kIsWeb) return;
     _initialized = true;
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      _nativeNotifications.setMethodCallHandler((call) async {
+        if (call.method == 'notificationTapped') {
+          final link = call.arguments?.toString();
+          await _nativeNotifications.invokeMethod<String>(
+            'takePendingNotificationLink',
+          );
+          _openLink(link);
+        }
+      });
+      try {
+        final pendingLink = await _nativeNotifications.invokeMethod<String>(
+          'takePendingNotificationLink',
+        );
+        if (pendingLink != null) _openLink(pendingLink);
+      } on PlatformException {
+        // Older Android builds may not yet expose this channel method.
+      } on MissingPluginException {
+        // Notifications remain optional if the native host is not rebuilt yet.
+      }
+    }
     FirebaseMessaging.onBackgroundMessage(z8FirebaseMessagingBackgroundHandler);
     await _messaging.setForegroundNotificationPresentationOptions(
-      alert: false,
-      badge: false,
-      sound: false,
+      alert: true,
+      badge: true,
+      sound: true,
     );
     FirebaseMessaging.onMessage.listen(_showForeground);
     FirebaseMessaging.onMessageOpenedApp.listen(_openMessage);
@@ -144,7 +166,8 @@ class NotificationService {
     }
   }
 
-  static void _showForeground(RemoteMessage message) {
+  static Future<void> _showForeground(RemoteMessage message) async {
+    if (defaultTargetPlatform != TargetPlatform.android) return;
     final notification = message.notification;
     final title = notification?.title?.trim();
     final body = notification?.body?.trim();
@@ -156,22 +179,17 @@ class NotificationService {
         (visibleBody == null || visibleBody.isEmpty)) {
       return;
     }
-    _foregroundLink = message.data['link']?.toString();
-    foregroundNotice.value = ForegroundNotice(
-      title: visibleTitle?.isNotEmpty == true ? visibleTitle! : 'Z8 update',
-      body: visibleBody ?? '',
-    );
-  }
-
-  static void openForegroundNotice() {
-    final link = _foregroundLink;
-    dismissForegroundNotice();
-    _openLink(link);
-  }
-
-  static void dismissForegroundNotice() {
-    _foregroundLink = null;
-    foregroundNotice.value = null;
+    try {
+      await _nativeNotifications.invokeMethod<void>('showNotification', {
+        'title': visibleTitle?.isNotEmpty == true ? visibleTitle : 'Z8 update',
+        'body': visibleBody ?? '',
+        'link': message.data['link']?.toString() ?? '',
+      });
+    } on PlatformException {
+      // System notification delivery is optional; do not replace it with an in-app banner.
+    } on MissingPluginException {
+      // A full native rebuild installs this Android notification channel.
+    }
   }
 
   static void _openMessage(RemoteMessage message) {
@@ -207,11 +225,4 @@ class NotificationService {
     }
     navigator.pushNamed('/workspace', arguments: section);
   }
-}
-
-class ForegroundNotice {
-  const ForegroundNotice({required this.title, required this.body});
-
-  final String title;
-  final String body;
 }

@@ -100,14 +100,7 @@ extension _WorkspaceClientAdminSections on _WorkspacePageState {
           if ('${wallet['funding_instructions'] ?? ''}'.isNotEmpty)
             _message('${wallet['funding_instructions']}'),
           _actionButton('Add funds', Icons.add, _reportDeposit),
-          _recordList(
-            'Movements',
-            wallet['entries'],
-            onTap: (entry) async {
-              if (entry['has_proof'] == true)
-                await _viewDepositProof('${entry['id']}', admin: false);
-            },
-          ),
+          _recordList('Movements', wallet['entries']),
         ],
       ],
     );
@@ -671,8 +664,9 @@ extension _WorkspaceClientAdminSections on _WorkspacePageState {
 
   Future<void> _viewApplicationPhoto(String id, String side) async {
     try {
+      final token = await _token();
       final response = await BackendApi.photonPayAction(
-        await _token(),
+        token,
         'application_photo',
         payload: {'applicationId': id, 'side': side},
       );
@@ -688,6 +682,7 @@ extension _WorkspaceClientAdminSections on _WorkspacePageState {
             width: 480,
             child: Image.network(
               url,
+              headers: {'Authorization': 'Bearer $token'},
               fit: BoxFit.contain,
               errorBuilder: (_, _, _) =>
                   const Text('Could not load the private ID photo.'),
@@ -1006,11 +1001,12 @@ extension _WorkspaceClientAdminSections on _WorkspacePageState {
     },
   );
 
-  Future<void> _viewDepositProof(String entryId, {bool admin = true}) async {
+  Future<void> _viewDepositProof(String entryId) async {
     try {
+      final token = await _token();
       final result = await BackendApi.photonPayAction(
-        await _token(),
-        admin ? 'deposit_proof' : 'my_deposit_proof',
+        token,
+        'deposit_proof',
         payload: {'entryId': entryId},
       );
       if (result['error'] != null) throw Exception(result['error']);
@@ -1023,6 +1019,7 @@ extension _WorkspaceClientAdminSections on _WorkspacePageState {
             width: 500,
             child: Image.network(
               '${result['url']}',
+              headers: {'Authorization': 'Bearer $token'},
               fit: BoxFit.contain,
               errorBuilder: (_, _, _) =>
                   const Text('Could not load the private payment proof.'),
