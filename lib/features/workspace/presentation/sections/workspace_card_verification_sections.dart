@@ -447,6 +447,7 @@ extension _WorkspaceCardVerificationSections on _WorkspacePageState {
   Future<void> _verificationForm() async {
     final imagePicker = ImagePicker();
     XFile? front, back;
+    Uint8List? frontPreview, backPreview;
     final selected = <String, String>{};
     final accountEmail = FirebaseAuth.instance.currentUser?.email?.trim() ?? '';
     final needsMobile = accountEmail.length > 40;
@@ -580,11 +581,15 @@ extension _WorkspaceCardVerificationSections on _WorkspacePageState {
           imageQuality: 80,
         );
         if (photo != null && dialogContext.mounted) {
+          final preview = await photo.readAsBytes();
+          if (!dialogContext.mounted) return;
           setDialog(() {
             if (isFront) {
               front = photo;
+              frontPreview = preview;
             } else {
               back = photo;
+              backPreview = preview;
             }
           });
         }
@@ -652,6 +657,17 @@ extension _WorkspaceCardVerificationSections on _WorkspacePageState {
                                   : 'Front selected',
                             ),
                           ),
+                          if (front != null)
+                            _verificationPhotoPreview(
+                              frontPreview,
+                              controllers['certType']!.text == 'passport'
+                                  ? 'Passport photo page'
+                                  : 'Front of ID',
+                              () => setDialog(() {
+                                front = null;
+                                frontPreview = null;
+                              }),
+                            ),
                           if (controllers['certType']!.text != 'passport')
                             OutlinedButton.icon(
                               onPressed: submitting || pickingFront || pickingBack
@@ -672,6 +688,16 @@ extension _WorkspaceCardVerificationSections on _WorkspacePageState {
                               label: Text(
                                 back == null ? 'Back of ID' : 'Back selected',
                               ),
+                            ),
+                          if (controllers['certType']!.text != 'passport' &&
+                              back != null)
+                            _verificationPhotoPreview(
+                              backPreview,
+                              'Back of ID',
+                              () => setDialog(() {
+                                back = null;
+                                backPreview = null;
+                              }),
                             ),
                         ],
                       ),
@@ -831,4 +857,56 @@ extension _WorkspaceCardVerificationSections on _WorkspacePageState {
       c.dispose();
     }
   }
+
+  Widget _verificationPhotoPreview(
+    Uint8List? bytes,
+    String label,
+    VoidCallback onRemove,
+  ) =>
+      Container(
+        width: 220,
+        height: 150,
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          color: const Color(0xFFF2F3F7),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: const Color(0xFFD9DDE7)),
+        ),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (bytes != null)
+              Image.memory(bytes, fit: BoxFit.contain)
+            else
+              const Center(child: Icon(Icons.image_outlined, size: 36)),
+            Positioned(
+              left: 8,
+              bottom: 8,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: Colors.black54,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  child: Text(
+                    label,
+                    style: const TextStyle(color: Colors.white, fontSize: 12),
+                  ),
+                ),
+              ),
+            ),
+            Positioned(
+              top: 4,
+              right: 4,
+              child: IconButton.filledTonal(
+                tooltip: 'Remove $label',
+                visualDensity: VisualDensity.compact,
+                onPressed: onRemove,
+                icon: const Icon(Icons.close_rounded, size: 18),
+              ),
+            ),
+          ],
+        ),
+      );
 }
